@@ -40,15 +40,17 @@ pip3 install -r requirements.txt
 Start the web server:
 
 ```bash
-# Development server
+# Development server (localhost only - secure by default)
 python3 app.py
 
-# Production server (recommended)
-gunicorn -w 4 -b 0.0.0.0:5000 app:app
+# Production server on localhost (recommended - use reverse proxy for network access)
+gunicorn -w 4 -b 127.0.0.1:5000 app:app
 
 # Or using waitress (Windows-friendly)
-waitress-serve --host=0.0.0.0 --port=5000 app:app
+waitress-serve --host=127.0.0.1 --port=5000 app:app
 ```
+
+**Security Note:** The application binds to `127.0.0.1` (localhost only) by default. For network access, use a reverse proxy like nginx or Apache with proper SSL/TLS configuration.
 
 Then open your browser to `http://localhost:5000`
 
@@ -170,16 +172,21 @@ export CACHE_DAYS="7"
 
 ### Production Deployment
 
+**IMPORTANT SECURITY NOTES:**
+- The application binds to `127.0.0.1` (localhost only) by default
+- **Never bind directly to 0.0.0.0** - always use a reverse proxy with SSL/TLS
+- For network access, use nginx/Apache as a reverse proxy with HTTPS
+
 For production use:
 
-1. **Change the Flask secret key** in `app.py`
+1. **Change the Flask secret key** in `app.py` (CRITICAL!)
 2. **Use a production WSGI server** (gunicorn, waitress, uWSGI)
-3. **Set up reverse proxy** (nginx, Apache)
-4. **Enable HTTPS**
+3. **Set up reverse proxy** (nginx, Apache) with SSL/TLS
+4. **Keep binding to 127.0.0.1** (localhost only)
 5. **Configure proper logging**
 6. **Set up monitoring**
 
-Example with gunicorn:
+Example with gunicorn (localhost binding):
 
 ```bash
 gunicorn -w 4 \
@@ -190,19 +197,32 @@ gunicorn -w 4 \
          app:app
 ```
 
-Example nginx configuration:
+Example nginx configuration with SSL:
 
 ```nginx
 server {
-    listen 80;
+    listen 443 ssl http2;
     server_name ja4lookr.example.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
 
     location / {
         proxy_pass http://127.0.0.1:5000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
+}
+
+# Redirect HTTP to HTTPS
+server {
+    listen 80;
+    server_name ja4lookr.example.com;
+    return 301 https://$server_name$request_uri;
 }
 ```
 

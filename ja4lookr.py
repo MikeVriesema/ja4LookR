@@ -5,6 +5,11 @@ import argparse
 from pathlib import Path
 import hashlib
 from datetime import datetime, timedelta
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 class JA4Lookup:
     def __init__(self, cache_dir=".ja4_cache", cache_days=7):
@@ -26,14 +31,14 @@ class JA4Lookup:
     
     def lookup(self, fingerprint):
         cache_file = self._cache_path(fingerprint)
-        
+
         # Check cache first
         if self._is_cache_valid(cache_file):
             with open(cache_file, 'r') as f:
                 return json.load(f)
-        
-        # API lookup
-        url = f"{self.base_url}/{fingerprint}" if fingerprint else self.base_url
+
+        # API lookup - use query parameter format
+        url = f"{self.base_url}/?ja4_fingerprint={fingerprint}" if fingerprint else self.base_url
         try:
             response = self.session.get(url, timeout=10)
             
@@ -88,15 +93,103 @@ class JA4Lookup:
     def batch_lookup(self, fingerprints, show_progress=True):
         results = {}
         total = len(fingerprints)
-        
+
         for idx, fp in enumerate(fingerprints, 1):
             if show_progress:
                 print(f"[{idx}/{total}] Looking up {fp}...", end='\r')
             results[fp] = self.lookup(fp)
-        
+
         if show_progress:
             print()  # New line after progress
         return results
+
+
+class VirusTotalLookup:
+    def __init__(self, api_key=None):
+        self.api_key = api_key or os.getenv('VIRUSTOTAL_API_KEY')
+        self.base_url = "https://www.virustotal.com/api/v3"
+        self.session = requests.Session()
+        if self.api_key:
+            self.session.headers.update({'x-apikey': self.api_key})
+
+    def is_configured(self):
+        """Check if VirusTotal API key is configured"""
+        return bool(self.api_key)
+
+    def lookup_ja4(self, fingerprint):
+        """
+        Search VirusTotal for JA4 fingerprint
+        Note: VT search uses different syntax, searching for JA4 in network traffic
+        """
+        if not self.is_configured():
+            return {
+                "status": "not_configured",
+                "message": "VirusTotal API key not configured. Set VIRUSTOTAL_API_KEY in .env file"
+            }
+
+        try:
+            # Search for the JA4 fingerprint in VT intelligence
+            search_url = f"{self.base_url}/intelligence/search"
+            params = {
+                'query': f'ja4:"{fingerprint}"',
+                'limit': 10
+            }
+
+            response = self.session.get(search_url, params=params, timeout=10)
+
+            if response.status_code == 401:
+                return {
+                    "status": "error",
+                    "message": "Invalid VirusTotal API key"
+                }
+            elif response.status_code == 429:
+                return {
+                    "status": "error",
+                    "message": "VirusTotal API rate limit exceeded"
+                }
+
+            response.raise_for_status()
+            data = response.json()
+
+            # Process results
+            files = data.get('data', [])
+            if not files:
+                return {
+                    "status": "not_found",
+                    "message": "No files found in VirusTotal with this JA4 fingerprint"
+                }
+
+            # Extract relevant information
+            results = []
+            for file_data in files[:10]:  # Limit to 10 results
+                attrs = file_data.get('attributes', {})
+                stats = attrs.get('last_analysis_stats', {})
+
+                results.append({
+                    'sha256': attrs.get('sha256'),
+                    'name': attrs.get('meaningful_name') or attrs.get('names', ['Unknown'])[0] if attrs.get('names') else 'Unknown',
+                    'size': attrs.get('size'),
+                    'type': attrs.get('type_description'),
+                    'malicious': stats.get('malicious', 0),
+                    'suspicious': stats.get('suspicious', 0),
+                    'undetected': stats.get('undetected', 0),
+                    'first_seen': attrs.get('first_submission_date'),
+                    'last_seen': attrs.get('last_analysis_date'),
+                    'vt_link': f"https://www.virustotal.com/gui/file/{attrs.get('sha256')}" if attrs.get('sha256') else None
+                })
+
+            return {
+                "status": "found",
+                "count": len(results),
+                "results": results
+            }
+
+        except requests.exceptions.RequestException as e:
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+
 
 def main():
     parser = argparse.ArgumentParser(description='JA4 Fingerprint Lookup Tool')

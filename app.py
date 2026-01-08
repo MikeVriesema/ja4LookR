@@ -9,11 +9,16 @@ from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import HTTPException
 import re
 import json
-from ja4lookr import JA4Lookup
+from ja4lookr import JA4Lookup, VirusTotalLookup
 from datetime import datetime
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = 'ja4lookr-secure-key-change-in-production'  # Change this in production
+app.secret_key = os.getenv('SECRET_KEY', 'ja4lookr-secure-key-change-in-production')
 
 # Rate limiting to prevent abuse
 limiter = Limiter(
@@ -25,6 +30,9 @@ limiter = Limiter(
 
 # Initialize JA4Lookup with caching
 ja4_lookup = JA4Lookup()
+
+# Initialize VirusTotal lookup (optional, requires API key)
+vt_lookup = VirusTotalLookup()
 
 # Validation regex for JA4 fingerprints (basic pattern)
 JA4_PATTERN = re.compile(r'^[a-z0-9_]{20,}$', re.IGNORECASE)
@@ -99,9 +107,16 @@ def lookup():
         # Parse fingerprint structure if available
         parsed = ja4_lookup.parse_ja4(fingerprint)
 
+        # VirusTotal lookup (if configured)
+        vt_result = None
+        if vt_lookup.is_configured():
+            vt_result = vt_lookup.lookup_ja4(fingerprint)
+
         return render_template('result.html',
                              result=formatted,
                              parsed=parsed,
+                             vt_result=vt_result,
+                             vt_configured=vt_lookup.is_configured(),
                              timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     except Exception as e:
         flash(f'Lookup error: {str(e)}', 'error')
@@ -210,5 +225,6 @@ def handle_exception(e):
                          message='An unexpected error occurred.'), 500
 
 if __name__ == '__main__':
-    # Development server - use production WSGI server in production
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Development server - localhost only for security
+    # Use production WSGI server with proper network config for production
+    app.run(host='127.0.0.1', port=5000, debug=False)
