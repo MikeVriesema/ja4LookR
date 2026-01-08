@@ -1,0 +1,340 @@
+{% extends "base.html" %}
+
+{% block title %}JA4LookR - Batch Results{% endblock %}
+
+{% block extra_css %}
+<style>
+    .summary-box {
+        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 30px;
+        border: 1px solid #bae6fd;
+    }
+
+    .summary-box h2 {
+        color: #0c4a6e;
+        margin-bottom: 15px;
+    }
+
+    .summary-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 15px;
+        margin-top: 15px;
+    }
+
+    .stat-item {
+        background: white;
+        padding: 15px;
+        border-radius: 5px;
+        text-align: center;
+        border: 1px solid #e0e0e0;
+    }
+
+    .stat-value {
+        font-size: 2em;
+        font-weight: bold;
+        color: #3b82f6;
+    }
+
+    .stat-label {
+        font-size: 0.9em;
+        color: #6b7280;
+        margin-top: 5px;
+    }
+
+    .result-item {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 15px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .result-item-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #f3f4f6;
+    }
+
+    .fingerprint-code {
+        font-family: 'Courier New', monospace;
+        font-size: 14px;
+        color: #1f2937;
+        word-break: break-all;
+        flex: 1;
+        margin-right: 15px;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+
+    .status-found {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .status-not-found {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    .status-error {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .app-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .app-tag {
+        background: #eff6ff;
+        color: #1e40af;
+        padding: 8px 12px;
+        border-radius: 5px;
+        font-size: 14px;
+        border: 1px solid #bfdbfe;
+    }
+
+    .app-tag.verified {
+        background: #d1fae5;
+        color: #065f46;
+        border-color: #86efac;
+    }
+
+    .not-found-message {
+        color: #991b1b;
+        font-size: 14px;
+    }
+
+    .error-message {
+        color: #92400e;
+        font-size: 14px;
+    }
+
+    .errors-box {
+        background: #fee2e2;
+        border-left: 4px solid #dc2626;
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+    }
+
+    .errors-box h3 {
+        color: #991b1b;
+        margin-bottom: 10px;
+    }
+
+    .errors-box ul {
+        margin-left: 20px;
+        color: #7f1d1d;
+    }
+
+    .timestamp {
+        color: #9ca3af;
+        font-size: 14px;
+        margin-top: 20px;
+        text-align: center;
+    }
+
+    .actions {
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 2px solid #e5e7eb;
+        display: flex;
+        gap: 10px;
+    }
+
+    .export-btn {
+        background: #6b7280;
+    }
+
+    .export-btn:hover {
+        background: #4b5563;
+    }
+
+    .filter-bar {
+        background: #f9fafb;
+        padding: 15px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+        border: 1px solid #e5e7eb;
+    }
+
+    .filter-btn {
+        padding: 8px 16px;
+        margin-right: 10px;
+        border: 1px solid #d1d5db;
+        background: white;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+
+    .filter-btn.active {
+        background: #3b82f6;
+        color: white;
+        border-color: #3b82f6;
+    }
+
+    .hidden {
+        display: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="summary-box">
+    <h2>📊 Batch Lookup Results</h2>
+    <div class="summary-stats">
+        <div class="stat-item">
+            <div class="stat-value">{{ total }}</div>
+            <div class="stat-label">Total Lookups</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value" id="found-count">0</div>
+            <div class="stat-label">Found</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value" id="not-found-count">0</div>
+            <div class="stat-label">Not Found</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value" id="error-count">0</div>
+            <div class="stat-label">Errors</div>
+        </div>
+    </div>
+</div>
+
+{% if errors %}
+<div class="errors-box">
+    <h3>⚠ Validation Errors</h3>
+    <ul>
+        {% for error in errors %}
+            <li>{{ error }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<div class="filter-bar">
+    <strong>Filter Results:</strong>
+    <button class="filter-btn active" onclick="filterResults('all')">All</button>
+    <button class="filter-btn" onclick="filterResults('found')">Found Only</button>
+    <button class="filter-btn" onclick="filterResults('not-found')">Not Found Only</button>
+    <button class="filter-btn" onclick="filterResults('error')">Errors Only</button>
+</div>
+
+<div id="results-container">
+    {% for item in results %}
+    <div class="result-item" data-status="{% if item.data.found %}found{% elif item.data.error %}error{% else %}not-found{% endif %}">
+        <div class="result-item-header">
+            <div class="fingerprint-code">{{ item.fingerprint }}</div>
+            {% if item.data.found %}
+                <span class="status-badge status-found">✓ Found</span>
+            {% elif item.data.error %}
+                <span class="status-badge status-error">⚠ Error</span>
+            {% else %}
+                <span class="status-badge status-not-found">✗ Not Found</span>
+            {% endif %}
+        </div>
+
+        {% if item.data.error %}
+            <div class="error-message">
+                <strong>Error:</strong> {{ item.data.message }}
+            </div>
+        {% elif not item.data.found %}
+            <div class="not-found-message">
+                <strong>Not in database</strong> - {{ item.data.message }}
+            </div>
+        {% else %}
+            <div class="app-list">
+                {% for entry in item.data.entries %}
+                    <div class="app-tag {% if entry.verified %}verified{% endif %}">
+                        <strong>{{ entry.application or 'Unknown' }}</strong>
+                        {% if entry.verified %} ✓{% endif %}
+                        {% if entry.device %}<br><small>{{ entry.device }}</small>{% endif %}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+
+<div class="timestamp">
+    Batch lookup completed at {{ timestamp }}
+</div>
+
+<div class="actions">
+    <a href="/" class="btn">← New Lookup</a>
+    <button class="btn export-btn" onclick="exportResults()">Export as JSON</button>
+</div>
+
+<script>
+// Count results
+window.addEventListener('DOMContentLoaded', function() {
+    const items = document.querySelectorAll('.result-item');
+    let foundCount = 0;
+    let notFoundCount = 0;
+    let errorCount = 0;
+
+    items.forEach(item => {
+        const status = item.dataset.status;
+        if (status === 'found') foundCount++;
+        else if (status === 'not-found') notFoundCount++;
+        else if (status === 'error') errorCount++;
+    });
+
+    document.getElementById('found-count').textContent = foundCount;
+    document.getElementById('not-found-count').textContent = notFoundCount;
+    document.getElementById('error-count').textContent = errorCount;
+});
+
+// Filter results
+function filterResults(filter) {
+    const items = document.querySelectorAll('.result-item');
+    const buttons = document.querySelectorAll('.filter-btn');
+
+    // Update button states
+    buttons.forEach(btn => btn.classList.remove('active'));
+    event.target.classList.add('active');
+
+    // Filter items
+    items.forEach(item => {
+        if (filter === 'all' || item.dataset.status === filter) {
+            item.classList.remove('hidden');
+        } else {
+            item.classList.add('hidden');
+        }
+    });
+}
+
+// Export results as JSON
+function exportResults() {
+    const results = {{ results | tojson }};
+    const dataStr = JSON.stringify(results, null, 2);
+    const dataBlob = new Blob([dataStr], {type: 'application/json'});
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'ja4lookr_batch_results_{{ timestamp | replace(" ", "_") | replace(":", "-") }}.json';
+    link.click();
+    URL.revokeObjectURL(url);
+}
+</script>
+{% endblock %}

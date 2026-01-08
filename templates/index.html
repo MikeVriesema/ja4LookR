@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block title %}JA4LookR - Lookup{% endblock %}
+
+{% block extra_css %}
+<style>
+    .tabs {
+        display: flex;
+        border-bottom: 2px solid #e0e0e0;
+        margin-bottom: 30px;
+    }
+
+    .tab {
+        padding: 12px 24px;
+        cursor: pointer;
+        background: transparent;
+        border: none;
+        font-size: 16px;
+        font-weight: 500;
+        color: #6b7280;
+        transition: all 0.3s;
+    }
+
+    .tab.active {
+        color: #3b82f6;
+        border-bottom: 3px solid #3b82f6;
+        margin-bottom: -2px;
+    }
+
+    .tab:hover {
+        color: #3b82f6;
+    }
+
+    .tab-content {
+        display: none;
+    }
+
+    .tab-content.active {
+        display: block;
+    }
+
+    .info-box {
+        background: #f0f9ff;
+        border-left: 4px solid #3b82f6;
+        padding: 20px;
+        margin-bottom: 30px;
+        border-radius: 5px;
+    }
+
+    .info-box h3 {
+        color: #1e40af;
+        margin-bottom: 10px;
+    }
+
+    .info-box ul {
+        margin-left: 20px;
+        margin-top: 10px;
+    }
+
+    .info-box li {
+        margin-bottom: 5px;
+    }
+
+    .example {
+        background: #f9fafb;
+        padding: 10px 15px;
+        border-radius: 5px;
+        font-family: 'Courier New', monospace;
+        margin-top: 10px;
+        border: 1px solid #e5e7eb;
+    }
+
+    textarea {
+        min-height: 200px;
+        font-family: 'Courier New', monospace;
+    }
+
+    .api-info {
+        background: #f9fafb;
+        padding: 20px;
+        border-radius: 5px;
+        margin-top: 30px;
+        border: 1px solid #e5e7eb;
+    }
+
+    .api-info h3 {
+        margin-bottom: 10px;
+        color: #374151;
+    }
+
+    .api-info code {
+        background: #fff;
+        padding: 2px 6px;
+        border-radius: 3px;
+        border: 1px solid #e5e7eb;
+        font-family: 'Courier New', monospace;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="info-box">
+    <h3>About JA4 Fingerprints</h3>
+    <p>JA4 is a network fingerprinting method that identifies TLS clients based on their handshake characteristics.
+       Use this tool to identify applications, detect anomalies, and investigate potential threats.</p>
+    <ul>
+        <li><strong>JA4</strong>: TLS client fingerprinting</li>
+        <li><strong>JA4H</strong>: HTTP client fingerprinting</li>
+        <li><strong>JA4S</strong>: TLS server fingerprinting</li>
+    </ul>
+</div>
+
+<div class="tabs">
+    <button class="tab active" onclick="switchTab('single')">Single Lookup</button>
+    <button class="tab" onclick="switchTab('batch')">Batch Lookup</button>
+</div>
+
+<div id="single" class="tab-content active">
+    <form method="POST" action="/lookup">
+        <div class="form-group">
+            <label for="fingerprint">JA4 Fingerprint:</label>
+            <input type="text"
+                   id="fingerprint"
+                   name="fingerprint"
+                   placeholder="t13d1516h2_8daaf6152771_b0da82dd1658"
+                   required
+                   autocomplete="off">
+            <div class="example">
+                Example: t13d1516h2_8daaf6152771_b0da82dd1658
+            </div>
+        </div>
+
+        <button type="submit" class="btn">Lookup Fingerprint</button>
+    </form>
+</div>
+
+<div id="batch" class="tab-content">
+    <form method="POST" action="/batch">
+        <div class="form-group">
+            <label for="fingerprints">JA4 Fingerprints (one per line, max 100):</label>
+            <textarea id="fingerprints"
+                      name="fingerprints"
+                      placeholder="t13d1516h2_8daaf6152771_b0da82dd1658&#10;t13d1517h2_5b57614c22b0_3d7a3b2f1c8e&#10;q13d0312h3_55b375c5d22e_06cda9e17597"
+                      required></textarea>
+            <small style="color: #6b7280; margin-top: 5px; display: block;">
+                Enter up to 100 fingerprints, one per line
+            </small>
+        </div>
+
+        <button type="submit" class="btn">Batch Lookup</button>
+    </form>
+</div>
+
+<div class="api-info">
+    <h3>🔌 API Access</h3>
+    <p>Programmatic access available via REST API:</p>
+    <div class="example" style="margin-top: 15px;">
+        GET /api/lookup/&lt;fingerprint&gt;
+    </div>
+    <p style="margin-top: 10px;">Example:</p>
+    <div class="example">
+        curl http://localhost:5000/api/lookup/t13d1516h2_8daaf6152771_b0da82dd1658
+    </div>
+    <p style="margin-top: 15px;"><strong>CLI Tool:</strong> For power users, use <code>python3 ja4lookr.py --help</code></p>
+</div>
+
+<script>
+function switchTab(tabName) {
+    // Hide all tab contents
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+    });
+
+    // Deactivate all tabs
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+
+    // Show selected tab content
+    document.getElementById(tabName).classList.add('active');
+
+    // Activate selected tab
+    event.target.classList.add('active');
+}
+</script>
+{% endblock %}

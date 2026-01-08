@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+
+{% block title %}JA4LookR - Result{% endblock %}
+
+{% block extra_css %}
+<style>
+    .result-header {
+        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 30px;
+        border: 1px solid #bae6fd;
+    }
+
+    .result-header h2 {
+        color: #0c4a6e;
+        margin-bottom: 10px;
+    }
+
+    .fingerprint-display {
+        font-family: 'Courier New', monospace;
+        background: white;
+        padding: 15px;
+        border-radius: 5px;
+        word-break: break-all;
+        border: 1px solid #e0e0e0;
+        margin-top: 10px;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-weight: 600;
+        font-size: 14px;
+        margin-top: 10px;
+    }
+
+    .status-found {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .status-not-found {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    .status-error {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .result-card {
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .result-card h3 {
+        color: #1f2937;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #e5e7eb;
+    }
+
+    .detail-row {
+        display: flex;
+        padding: 12px 0;
+        border-bottom: 1px solid #f3f4f6;
+    }
+
+    .detail-row:last-child {
+        border-bottom: none;
+    }
+
+    .detail-label {
+        font-weight: 600;
+        color: #6b7280;
+        min-width: 180px;
+    }
+
+    .detail-value {
+        color: #1f2937;
+        flex: 1;
+    }
+
+    .verified-badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 3px;
+        font-size: 12px;
+        font-weight: 600;
+        margin-left: 8px;
+    }
+
+    .verified-yes {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .verified-no {
+        background: #f3f4f6;
+        color: #6b7280;
+    }
+
+    .warning-box {
+        background: #fef3c7;
+        border-left: 4px solid #f59e0b;
+        padding: 20px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+    }
+
+    .warning-box h3 {
+        color: #92400e;
+        margin-bottom: 10px;
+    }
+
+    .warning-box ul {
+        margin-left: 20px;
+        color: #78350f;
+    }
+
+    .parsed-info {
+        background: #f9fafb;
+        padding: 15px;
+        border-radius: 5px;
+        font-family: 'Courier New', monospace;
+        font-size: 14px;
+        margin-top: 10px;
+    }
+
+    .actions {
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 2px solid #e5e7eb;
+    }
+
+    .timestamp {
+        color: #9ca3af;
+        font-size: 14px;
+        margin-top: 20px;
+        text-align: center;
+    }
+
+    .entry-separator {
+        border-top: 2px solid #e5e7eb;
+        margin: 20px 0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="result-header">
+    <h2>Lookup Result</h2>
+    <div class="fingerprint-display">{{ result.fingerprint }}</div>
+
+    {% if result.found %}
+        <span class="status-badge status-found">✓ Found in Database</span>
+    {% elif result.error %}
+        <span class="status-badge status-error">⚠ Error</span>
+    {% else %}
+        <span class="status-badge status-not-found">✗ Not Found</span>
+    {% endif %}
+</div>
+
+{% if parsed %}
+<div class="result-card">
+    <h3>📊 Fingerprint Analysis</h3>
+    <div class="detail-row">
+        <div class="detail-label">Protocol:</div>
+        <div class="detail-value">
+            {% if parsed.is_tls13 %}TLS 1.3{% elif parsed.is_tls12 %}TLS 1.2{% elif parsed.is_quic %}QUIC{% else %}{{ parsed.protocol }}{% endif %}
+        </div>
+    </div>
+    {% if parsed.cipher_count %}
+    <div class="detail-row">
+        <div class="detail-label">Cipher Count:</div>
+        <div class="detail-value">{{ parsed.cipher_count }}</div>
+    </div>
+    {% endif %}
+    {% if parsed.extension_count %}
+    <div class="detail-row">
+        <div class="detail-label">Extension Count:</div>
+        <div class="detail-value">{{ parsed.extension_count }}</div>
+    </div>
+    {% endif %}
+    <div class="detail-row">
+        <div class="detail-label">Cipher Hash:</div>
+        <div class="detail-value">{{ parsed.cipher_hash }}</div>
+    </div>
+    <div class="detail-row">
+        <div class="detail-label">Extension Hash:</div>
+        <div class="detail-value">{{ parsed.extension_hash }}</div>
+    </div>
+</div>
+{% endif %}
+
+{% if result.error %}
+    <div class="warning-box">
+        <h3>⚠ Lookup Error</h3>
+        <p>{{ result.message }}</p>
+    </div>
+{% elif not result.found %}
+    <div class="warning-box">
+        <h3>🔍 Fingerprint Not Found</h3>
+        <p>{{ result.message }}</p>
+        <p style="margin-top: 10px;"><strong>This could indicate:</strong></p>
+        <ul>
+            <li>Custom or proprietary application</li>
+            <li>New malware variant</li>
+            <li>Uncommon TLS client configuration</li>
+            <li>Recently released software not yet catalogued</li>
+        </ul>
+        <p style="margin-top: 15px;"><strong>Recommendation:</strong> {{ result.recommendation }}</p>
+    </div>
+{% else %}
+    {% for entry in result.entries %}
+        {% if loop.index > 1 %}
+            <div class="entry-separator"></div>
+        {% endif %}
+
+        <div class="result-card">
+            <h3>
+                🎯 Match #{{ loop.index }}
+                {% if entry.verified %}
+                    <span class="verified-badge verified-yes">✓ Verified</span>
+                {% else %}
+                    <span class="verified-badge verified-no">Unverified</span>
+                {% endif %}
+            </h3>
+
+            <div class="detail-row">
+                <div class="detail-label">Application:</div>
+                <div class="detail-value"><strong>{{ entry.application or 'Unknown' }}</strong></div>
+            </div>
+
+            {% if entry.library %}
+            <div class="detail-row">
+                <div class="detail-label">Library:</div>
+                <div class="detail-value">{{ entry.library }}</div>
+            </div>
+            {% endif %}
+
+            {% if entry.device %}
+            <div class="detail-row">
+                <div class="detail-label">Device:</div>
+                <div class="detail-value">{{ entry.device }}</div>
+            </div>
+            {% endif %}
+
+            {% if entry.os %}
+            <div class="detail-row">
+                <div class="detail-label">Operating System:</div>
+                <div class="detail-value">{{ entry.os }}</div>
+            </div>
+            {% endif %}
+
+            {% if entry.user_agent_string %}
+            <div class="detail-row">
+                <div class="detail-label">User Agent:</div>
+                <div class="detail-value">{{ entry.user_agent_string }}</div>
+            </div>
+            {% endif %}
+
+            {% if entry.observation_count %}
+            <div class="detail-row">
+                <div class="detail-label">Observations:</div>
+                <div class="detail-value">{{ entry.observation_count }}</div>
+            </div>
+            {% endif %}
+
+            {% if entry.notes %}
+            <div class="detail-row">
+                <div class="detail-label">Notes:</div>
+                <div class="detail-value">{{ entry.notes }}</div>
+            </div>
+            {% endif %}
+        </div>
+    {% endfor %}
+
+    <div style="background: #f0fdf4; padding: 15px; border-radius: 5px; border-left: 4px solid #22c55e; margin-top: 20px;">
+        <strong>✓ Total Matches Found:</strong> {{ result.count }}
+    </div>
+{% endif %}
+
+<div class="timestamp">
+    Lookup performed at {{ timestamp }}
+</div>
+
+<div class="actions">
+    <a href="/" class="btn">← New Lookup</a>
+</div>
+{% endblock %}
