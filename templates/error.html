@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}Error - JA4LookR{% endblock %}
+
+{% block extra_css %}
+<style>
+    .error-container {
+        text-align: center;
+        padding: 60px 20px;
+    }
+
+    .error-icon {
+        font-size: 5em;
+        margin-bottom: 20px;
+    }
+
+    .error-title {
+        font-size: 2em;
+        color: #dc2626;
+        margin-bottom: 15px;
+    }
+
+    .error-message {
+        font-size: 1.2em;
+        color: #6b7280;
+        margin-bottom: 30px;
+    }
+
+    .error-box {
+        background: #fee2e2;
+        border-left: 4px solid #dc2626;
+        padding: 20px;
+        border-radius: 5px;
+        margin: 30px auto;
+        max-width: 600px;
+        text-align: left;
+    }
+
+    .error-box h3 {
+        color: #991b1b;
+        margin-bottom: 10px;
+    }
+
+    .error-box p {
+        color: #7f1d1d;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="error-container">
+    <div class="error-icon">⚠️</div>
+    <h1 class="error-title">{{ error }}</h1>
+    <p class="error-message">{{ message }}</p>
+
+    <div class="error-box">
+        <h3>What happened?</h3>
+        <p>{{ message }}</p>
+    </div>
+
+    <div style="margin-top: 40px;">
+        <a href="/" class="btn">← Back to Home</a>
+    </div>
+</div>
+{% endblock %}
