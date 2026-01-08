@@ -210,5 +210,6 @@ def handle_exception(e):
                          message='An unexpected error occurred.'), 500
 
 if __name__ == '__main__':
-    # Development server - use production WSGI server in production
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Development server - localhost only for security
+    # Use production WSGI server with proper network config for production
+    app.run(host='127.0.0.1', port=5000, debug=False)
