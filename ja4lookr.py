@@ -129,10 +129,12 @@ class VirusTotalLookup:
 
         try:
             # Search for the JA4 fingerprint in VT intelligence
+            # Use behavior_network: modifier as per VT's JA4 implementation
+            # Reference: https://blog.virustotal.com/2024/10/unveiling-hidden-connections-ja4-client.html
             search_url = f"{self.base_url}/intelligence/search"
             params = {
-                'query': f'ja4:"{fingerprint}"',
-                'limit': 10
+                'query': f'behavior_network:{fingerprint}',
+                'limit': 40
             }
 
             response = self.session.get(search_url, params=params, timeout=10)
@@ -146,6 +148,11 @@ class VirusTotalLookup:
                 return {
                     "status": "error",
                     "message": "VirusTotal API rate limit exceeded"
+                }
+            elif response.status_code == 400:
+                return {
+                    "status": "error",
+                    "message": "Bad request - check VT API syntax"
                 }
 
             response.raise_for_status()
