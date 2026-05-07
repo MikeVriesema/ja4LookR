@@ -206,5 +206,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# JA4LookR cache
+# JA4LookR cache and result files
 .ja4_cache/
+ja4lookr_results.json
+ja4lookr_results_*.json

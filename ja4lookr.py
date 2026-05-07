@@ -1,277 +1,662 @@
 #!/usr/bin/env python3
-import requests
-import json
+"""JA4 Fingerprint Lookup Tool.
+
+Pulls the full JA4DB once and caches it locally, then resolves exact, near,
+partial, or wildcard matches in-process. Falls back to VirusTotal Intelligence
+with automatic file/network pivoting when a sample is unfamiliar.
+
+References:
+  https://github.com/FoxIO-LLC/ja4
+  https://blog.virustotal.com/2024/10/unveiling-hidden-connections-ja4-client.html
+"""
 import argparse
-from pathlib import Path
-import hashlib
-from datetime import datetime, timedelta
+import gzip
+import json
 import os
-from dotenv import load_dotenv
+import re
+import sys
+from collections import Counter
+from datetime import datetime, timedelta
+from pathlib import Path
 
-# Load environment variables from .env file
-load_dotenv()
+import requests
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+
+JA4DB_URL = "https://ja4db.com/api/read/"
+DEFAULT_CACHE_DIR = Path(".ja4_cache")
+DB_CACHE_NAME = "ja4db_full.json.gz"
+DB_CACHE_DAYS = 1
+DEFAULT_OUTPUT_PREFIX = "ja4lookr_results"
+
+
+def default_output_path():
+    """Timestamped default filename so successive runs don't overwrite."""
+    ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+    return f"{DEFAULT_OUTPUT_PREFIX}_{ts}.json"
+
+
+# ----- JA4 spec decoding -----
+TRANSPORT = {
+    "t": "TCP (TLS over TCP)",
+    "q": "QUIC (TLS 1.3 carried in QUIC)",
+    "d": "DTLS",
+}
+TLS_VERSIONS = {
+    "13": "TLS 1.3",
+    "12": "TLS 1.2",
+    "11": "TLS 1.1",
+    "10": "TLS 1.0",
+    "s3": "SSL 3.0",
+    "s2": "SSL 2.0",
+    "s1": "SSL 1.0",
+    "00": "Unknown / no TLS",
+}
+SNI_FLAG = {
+    "d": "SNI present (server hostname sent in ClientHello)",
+    "i": "No SNI (IP-only / hostname omitted)",
+}
+ALPN_KNOWN = {
+    "h2": "HTTP/2",
+    "h1": "HTTP/1.1",
+    "h3": "HTTP/3",
+    "00": "no ALPN advertised",
+}
+
+
+def parse_ja4(fingerprint):
+    """Decode a JA4 client fingerprint into labeled, human-readable components.
+
+    Layout of the first segment (ja4_a):
+      [transport][tls_version 2c][sni 1c][cipher_count 2d][ext_count 2d][alpn 2c]
+      e.g. t13d1516h2 = TCP, TLS 1.3, SNI present, 15 ciphers, 16 extensions, ALPN h2
+    Followed by:
+      ja4_b = first 12 chars of SHA256 over the sorted cipher list
+      ja4_c = first 12 chars of SHA256 over sorted extensions + signature algorithms
+    """
+    if "*" in fingerprint:
+        return None
+    parts = fingerprint.split("_")
+    if len(parts) != 3 or len(parts[0]) < 10:
+        return None
+    a, b, c = parts
+    transport, tls_ver, sni = a[0], a[1:3], a[3]
+    cipher_code, ext_code, alpn = a[4:6], a[6:8], a[8:10]
+    try:
+        cipher_n, ext_n = int(cipher_code), int(ext_code)
+    except ValueError:
+        cipher_n = ext_n = None
+
+    return {
+        "fingerprint": fingerprint,
+        "ja4_a": a,
+        "ja4_b_cipher_hash": b,
+        "ja4_c_extension_hash": c,
+        "components": {
+            "transport": {"code": transport,
+                          "meaning": TRANSPORT.get(transport, f"Unknown ({transport})")},
+            "tls_version": {"code": tls_ver,
+                            "meaning": TLS_VERSIONS.get(tls_ver, f"Unknown ({tls_ver})")},
+            "sni": {"code": sni,
+                    "meaning": SNI_FLAG.get(sni, f"Unknown ({sni})")},
+            "cipher_count": {"code": cipher_code, "value": cipher_n,
+                             "meaning": f"{cipher_n} cipher suites offered"
+                             if cipher_n is not None else "unparsed"},
+            "extension_count": {"code": ext_code, "value": ext_n,
+                                "meaning": f"{ext_n} TLS extensions present"
+                                if ext_n is not None else "unparsed"},
+            "alpn": {"code": alpn,
+                     "meaning": ALPN_KNOWN.get(alpn, f"ALPN first/last char = '{alpn}'")},
+        },
+        "summary": (
+            f"{TRANSPORT.get(transport, transport)} | "
+            f"{TLS_VERSIONS.get(tls_ver, tls_ver)} | "
+            f"{SNI_FLAG.get(sni, sni)} | "
+            f"{cipher_n} ciphers, {ext_n} extensions | "
+            f"ALPN={ALPN_KNOWN.get(alpn, alpn)}"
+        ),
+        "is_tls13": tls_ver == "13",
+        "is_tls12": tls_ver == "12",
+        "is_quic": transport == "q",
+    }
+
+
+# ----- Wildcard helpers -----
+def has_wildcard(fp):
+    return "*" in fp
+
+
+def wildcard_to_regex(pattern):
+    """Convert a JA4 wildcard pattern to a compiled regex. `*` matches any chars."""
+    escaped = re.escape(pattern).replace(r"\*", ".*")
+    return re.compile(f"^{escaped}$", re.IGNORECASE)
+
+
+# ----- JA4DB lookup (local cache + in-memory indexes) -----
 class JA4Lookup:
-    def __init__(self, cache_dir=".ja4_cache", cache_days=7):
-        self.base_url = "https://ja4db.com/api/read"
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(exist_ok=True)
+    FP_FIELDS = ("ja4_fingerprint", "ja4s_fingerprint", "ja4h_fingerprint",
+                 "ja4x_fingerprint", "ja4t_fingerprint", "ja4ts_fingerprint",
+                 "ja4tscan_fingerprint")
+
+    def __init__(self, cache_dir=DEFAULT_CACHE_DIR, cache_days=DB_CACHE_DAYS):
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+        if self.cache_dir:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_duration = timedelta(days=cache_days)
-        self.session = requests.Session()
-        
-    def _cache_path(self, fingerprint):
-        fp_hash = hashlib.md5(fingerprint.encode()).hexdigest()
-        return self.cache_dir / f"{fp_hash}.json"
-    
-    def _is_cache_valid(self, cache_file):
-        if not cache_file.exists():
+        self._db = None
+        self._indexes = None
+
+    def _db_path(self):
+        return self.cache_dir / DB_CACHE_NAME if self.cache_dir else None
+
+    def _cache_fresh(self):
+        path = self._db_path()
+        if not path or not path.exists():
             return False
-        mtime = datetime.fromtimestamp(cache_file.stat().st_mtime)
+        mtime = datetime.fromtimestamp(path.stat().st_mtime)
         return datetime.now() - mtime < self.cache_duration
-    
+
+    def refresh(self, force=False):
+        path = self._db_path()
+        if path and not force and self._cache_fresh():
+            return
+        print(f"[*] Pulling JA4DB from {JA4DB_URL} ...", file=sys.stderr)
+        resp = requests.get(JA4DB_URL, timeout=120)
+        resp.raise_for_status()
+        data = resp.json()
+        print(f"[*] {len(data)} records cached", file=sys.stderr)
+        if path:
+            with gzip.open(path, "wt", encoding="utf-8") as f:
+                json.dump(data, f)
+        self._db = data
+        self._indexes = None
+
+    def _load(self):
+        if self._db is not None:
+            return
+        path = self._db_path()
+        if path and self._cache_fresh():
+            with gzip.open(path, "rt", encoding="utf-8") as f:
+                self._db = json.load(f)
+        else:
+            self.refresh(force=True)
+
+    def _build_indexes(self):
+        if self._indexes is not None:
+            return
+        exact, cipher_idx, ext_idx = {}, {}, {}
+        for r in self._db:
+            for field in self.FP_FIELDS:
+                fp = r.get(field)
+                if fp:
+                    exact.setdefault(fp.lower(), []).append(r)
+            ja4 = r.get("ja4_fingerprint")
+            if ja4 and ja4.count("_") == 2:
+                _, b, c = ja4.split("_")
+                cipher_idx.setdefault(b.lower(), []).append(r)
+                ext_idx.setdefault(c.lower(), []).append(r)
+        self._indexes = {"exact": exact, "cipher": cipher_idx, "extension": ext_idx}
+
     def lookup(self, fingerprint):
-        cache_file = self._cache_path(fingerprint)
+        """Return (matches, match_type).
+        match_type: exact | near | partial | wildcard | none.
+        For partial, matches is dict {cipher_matches, extension_matches}; otherwise list.
+        """
+        self._load()
+        self._build_indexes()
+        fp = fingerprint.lower().strip()
 
-        # Check cache first
-        if self._is_cache_valid(cache_file):
-            with open(cache_file, 'r') as f:
-                return json.load(f)
+        if has_wildcard(fp):
+            rx = wildcard_to_regex(fp)
+            seen, hits = set(), []
+            for r in self._db:
+                for field in self.FP_FIELDS:
+                    v = r.get(field)
+                    if v and rx.match(v):
+                        oid = id(r)
+                        if oid not in seen:
+                            seen.add(oid)
+                            hits.append(r)
+                        break
+            return hits, ("wildcard" if hits else "none")
 
-        # API lookup - use query parameter format
-        url = f"{self.base_url}/?ja4_fingerprint={fingerprint}" if fingerprint else self.base_url
-        try:
-            response = self.session.get(url, timeout=10)
-            
-            if response.status_code == 404:
-                result = {
-                    "status": "not_found",
-                    "fingerprint": fingerprint,
-                    "message": "Fingerprint not in JA4DB - potentially custom application or new malware",
-                    "recommendation": "Consider submitting to ja4db.com if legitimate traffic"
-                }
-            else:
-                response.raise_for_status()
-                result = response.json()
-            
-            # Cache the result (including 404s to avoid repeated lookups)
-            with open(cache_file, 'w') as f:
-                json.dump(result, f)
-            
-            return result
-            
-        except requests.exceptions.RequestException as e:
-            return {
-                "status": "error",
-                "fingerprint": fingerprint,
-                "error": str(e)
-            }
-    
-    def parse_ja4(self, fingerprint):
-        """Parse JA4 fingerprint into components for analysis"""
-        try:
-            parts = fingerprint.split('_')
-            if len(parts) != 3:
-                return None
-            
-            proto_version = parts[0][:3]  # t13, t12, q13
-            details = parts[0][3:]
-            
-            return {
-                "fingerprint": fingerprint,
-                "protocol": proto_version,
-                "cipher_count": details[0:2] if len(details) >= 2 else None,
-                "extension_count": details[2:4] if len(details) >= 4 else None,
-                "cipher_hash": parts[1],
-                "extension_hash": parts[2],
-                "is_tls13": proto_version == "t13",
-                "is_tls12": proto_version == "t12",
-                "is_quic": proto_version.startswith("q")
-            }
-        except Exception:
-            return None
-    
+        hits = self._indexes["exact"].get(fp)
+        if hits:
+            return hits, "exact"
+
+        if fp.count("_") != 2:
+            return [], "none"
+        _, b, c = fp.split("_")
+        cipher_hits = self._indexes["cipher"].get(b, [])
+        ext_hits = self._indexes["extension"].get(c, [])
+        near = [r for r in cipher_hits
+                if (r.get("ja4_fingerprint") or "").lower().endswith(f"_{b}_{c}")]
+        if near:
+            return near, "near"
+        if cipher_hits or ext_hits:
+            return {"cipher_matches": cipher_hits, "extension_matches": ext_hits}, "partial"
+        return [], "none"
+
     def batch_lookup(self, fingerprints, show_progress=True):
         results = {}
+        self._load()
+        self._build_indexes()
         total = len(fingerprints)
-
         for idx, fp in enumerate(fingerprints, 1):
             if show_progress:
-                print(f"[{idx}/{total}] Looking up {fp}...", end='\r')
+                print(f"[{idx}/{total}] {fp}", end="\r", file=sys.stderr)
             results[fp] = self.lookup(fp)
-
         if show_progress:
-            print()  # New line after progress
+            print(file=sys.stderr)
         return results
 
 
+# ----- VirusTotal Intelligence pivoting -----
 class VirusTotalLookup:
+    """VT Intelligence pivoting on JA4.
+
+    Implements the workflow from FoxIO + VirusTotal:
+      1. behavior_network:<ja4>           - find files communicating with this JA4
+         (wildcards supported, e.g. behavior_network:t13d190900_*_97f8aa674fd9)
+      2. /files/<sha256>/contacted_{ips,domains,urls} - enrich each hit with
+         the network indicators those samples reach out to
+      3. Generate a VT YARA rule scaffold for hunting
+
+    Requires a VT Intelligence or Enterprise API key. The free public key
+    rejects behavior_network: queries with 403/empty.
+    """
+
     def __init__(self, api_key=None):
-        self.api_key = api_key or os.getenv('VIRUSTOTAL_API_KEY')
+        self.api_key = api_key or os.getenv("VIRUSTOTAL_API_KEY") or os.getenv("VT_API_KEY")
         self.base_url = "https://www.virustotal.com/api/v3"
         self.session = requests.Session()
         if self.api_key:
-            self.session.headers.update({'x-apikey': self.api_key})
+            self.session.headers["x-apikey"] = self.api_key
 
     def is_configured(self):
-        """Check if VirusTotal API key is configured"""
         return bool(self.api_key)
 
-    def lookup_ja4(self, fingerprint):
-        """
-        Search VirusTotal for JA4 fingerprint
-        Note: VT search uses different syntax, searching for JA4 in network traffic
-        """
+    def _get(self, path, params=None, timeout=20):
+        r = self.session.get(f"{self.base_url}{path}", params=params, timeout=timeout)
+        if r.status_code == 401:
+            raise PermissionError("Invalid VirusTotal API key")
+        if r.status_code == 403:
+            raise PermissionError("VT Intelligence not available on this key (paid feature)")
+        if r.status_code == 429:
+            raise RuntimeError("VirusTotal rate limit exceeded")
+        r.raise_for_status()
+        return r.json()
+
+    def search_behavior_network(self, ja4_or_pattern, limit=25):
+        """Run intelligence search: behavior_network:<ja4_or_wildcard>."""
+        data = self._get("/intelligence/search",
+                         params={"query": f"behavior_network:{ja4_or_pattern}",
+                                 "limit": limit})
+        return data.get("data", [])
+
+    def get_file_network(self, sha256, limit=10):
+        """Pull contacted IPs / domains / URLs for one file."""
+        out = {}
+        for endpoint, key in (("contacted_ips", "contacted_ips"),
+                              ("contacted_domains", "contacted_domains"),
+                              ("contacted_urls", "contacted_urls")):
+            try:
+                data = self._get(f"/files/{sha256}/{endpoint}", params={"limit": limit})
+                items = data.get("data", [])
+                if endpoint == "contacted_urls":
+                    out[key] = [(it.get("attributes", {}).get("url") or it.get("id"))
+                                for it in items]
+                else:
+                    out[key] = [it.get("id") for it in items]
+            except (PermissionError, RuntimeError, requests.exceptions.RequestException) as e:
+                out[key] = {"error": str(e)}
+        return out
+
+    def lookup_ja4(self, ja4_or_pattern, enrich=True, max_enrich=5,
+                   max_files=10, network_limit=10):
         if not self.is_configured():
-            return {
-                "status": "not_configured",
-                "message": "VirusTotal API key not configured. Set VIRUSTOTAL_API_KEY in .env file"
-            }
-
+            return {"status": "not_configured",
+                    "message": "Set VIRUSTOTAL_API_KEY (or VT_API_KEY) to enable VT lookup"}
+        query = f"behavior_network:{ja4_or_pattern}"
         try:
-            # Search for the JA4 fingerprint in VT intelligence
-            # Use behavior_network: modifier as per VT's JA4 implementation
-            # Reference: https://blog.virustotal.com/2024/10/unveiling-hidden-connections-ja4-client.html
-            search_url = f"{self.base_url}/intelligence/search"
-            params = {
-                'query': f'behavior_network:{fingerprint}',
-                'limit': 40
-            }
-
-            response = self.session.get(search_url, params=params, timeout=10)
-
-            if response.status_code == 401:
-                return {
-                    "status": "error",
-                    "message": "Invalid VirusTotal API key"
-                }
-            elif response.status_code == 429:
-                return {
-                    "status": "error",
-                    "message": "VirusTotal API rate limit exceeded"
-                }
-            elif response.status_code == 400:
-                return {
-                    "status": "error",
-                    "message": "Bad request - check VT API syntax"
-                }
-
-            response.raise_for_status()
-            data = response.json()
-
-            # Process results
-            files = data.get('data', [])
-            if not files:
-                return {
-                    "status": "not_found",
-                    "message": "No files found in VirusTotal with this JA4 fingerprint"
-                }
-
-            # Extract relevant information
-            results = []
-            for file_data in files[:10]:  # Limit to 10 results
-                attrs = file_data.get('attributes', {})
-                stats = attrs.get('last_analysis_stats', {})
-
-                results.append({
-                    'sha256': attrs.get('sha256'),
-                    'name': attrs.get('meaningful_name') or attrs.get('names', ['Unknown'])[0] if attrs.get('names') else 'Unknown',
-                    'size': attrs.get('size'),
-                    'type': attrs.get('type_description'),
-                    'malicious': stats.get('malicious', 0),
-                    'suspicious': stats.get('suspicious', 0),
-                    'undetected': stats.get('undetected', 0),
-                    'first_seen': attrs.get('first_submission_date'),
-                    'last_seen': attrs.get('last_analysis_date'),
-                    'vt_link': f"https://www.virustotal.com/gui/file/{attrs.get('sha256')}" if attrs.get('sha256') else None
-                })
-
-            return {
-                "status": "found",
-                "count": len(results),
-                "results": results
-            }
-
+            files = self.search_behavior_network(ja4_or_pattern, limit=max(max_files, 25))
+        except PermissionError as e:
+            return {"status": "error", "query": query, "message": str(e)}
+        except RuntimeError as e:
+            return {"status": "error", "query": query, "message": str(e)}
         except requests.exceptions.RequestException as e:
-            return {
-                "status": "error",
-                "message": str(e)
+            return {"status": "error", "query": query, "message": str(e)}
+
+        if not files:
+            return {"status": "not_found", "query": query,
+                    "message": "No files in VT exhibit this JA4 in their behavior_network"}
+
+        results = []
+        all_ips, all_domains, all_urls = Counter(), Counter(), Counter()
+        for idx, f in enumerate(files[:max_files]):
+            a = f.get("attributes", {})
+            stats = a.get("last_analysis_stats", {})
+            sha = a.get("sha256")
+            names = a.get("names") or []
+            entry = {
+                "sha256": sha,
+                "name": a.get("meaningful_name") or (names[0] if names else "Unknown"),
+                "type": a.get("type_description"),
+                "size": a.get("size"),
+                "malicious": stats.get("malicious", 0),
+                "suspicious": stats.get("suspicious", 0),
+                "undetected": stats.get("undetected", 0),
+                "first_seen": a.get("first_submission_date"),
+                "last_seen": a.get("last_analysis_date"),
+                "tags": a.get("tags"),
+                "vt_link": f"https://www.virustotal.com/gui/file/{sha}" if sha else None,
             }
+            if enrich and sha and idx < max_enrich:
+                net = self.get_file_network(sha, limit=network_limit)
+                entry["network"] = net
+                for ip in net.get("contacted_ips", []) or []:
+                    if isinstance(ip, str):
+                        all_ips[ip] += 1
+                for d in net.get("contacted_domains", []) or []:
+                    if isinstance(d, str):
+                        all_domains[d] += 1
+                for u in net.get("contacted_urls", []) or []:
+                    if isinstance(u, str):
+                        all_urls[u] += 1
+            results.append(entry)
+
+        summary = {
+            "top_contacted_ips": all_ips.most_common(10),
+            "top_contacted_domains": all_domains.most_common(10),
+            "top_contacted_urls": all_urls.most_common(10),
+        } if enrich else None
+
+        return {
+            "status": "found",
+            "query": query,
+            "count": len(results),
+            "results": results,
+            "network_pivots": summary,
+        }
 
 
+# ----- YARA rule scaffolding -----
+def yara_rule_for(fingerprint):
+    """Generate a VT YARA rule from a JA4 fingerprint or wildcard pattern.
+
+    Pattern based on the FoxIO/VirusTotal blog post on JA4 hunting.
+    Adjust the vt module field names for your environment if needed.
+    """
+    safe = re.sub(r"[^A-Za-z0-9_]", "_", fingerprint)
+    rule_name = f"JA4_{safe}"[:80]
+    if has_wildcard(fingerprint):
+        regex = "/" + fingerprint.replace("*", ".*") + "/"
+        condition = (f"        for any net in vt.behaviour.network : (\n"
+                     f"            net.ja4 matches {regex}\n"
+                     f"        )")
+    else:
+        condition = (f'        for any net in vt.behaviour.network : (\n'
+                     f'            net.ja4 == "{fingerprint}"\n'
+                     f'        )')
+    return (
+        f'import "vt"\n\n'
+        f'rule {rule_name} {{\n'
+        f'    meta:\n'
+        f'        author = "ja4lookr"\n'
+        f'        description = "Detect JA4 fingerprint {fingerprint}"\n'
+        f'    condition:\n'
+        f'{condition}\n'
+        f'}}\n'
+    )
+
+
+# ----- Output formatting -----
+RECORD_LABELS = [
+    ("application", "App"),
+    ("library", "Library"),
+    ("device", "Device"),
+    ("os", "OS"),
+    ("user_agent_string", "User-Agent"),
+    ("certificate_authority", "CA"),
+    ("verified", "Verified"),
+    ("observation_count", "Observations"),
+    ("notes", "Notes"),
+]
+
+
+def _record_lines(r, indent="   "):
+    for k, label in RECORD_LABELS:
+        v = r.get(k)
+        if v in (None, "", False) and k != "verified":
+            continue
+        yield f"{indent}{label:<13} {v}"
+
+
+def _top_apps(records, n=5):
+    counts = Counter()
+    for r in records:
+        label = r.get("application") or r.get("library")
+        if not label and r.get("user_agent_string"):
+            label = r["user_agent_string"][:60]
+        if label:
+            counts[label] += 1
+    if not counts:
+        return "no labeled records"
+    return ", ".join(f"{name} ({c})" for name, c in counts.most_common(n))
+
+
+def format_lookup(fp, matches, mt, app_filter=None, verified_only=False):
+    def _filter(records):
+        if app_filter:
+            records = [r for r in records
+                       if (r.get("application") or "").lower() == app_filter.lower()]
+        if verified_only:
+            records = [r for r in records if r.get("verified")]
+        return records
+
+    lines = [f"\nFingerprint: {fp}"]
+    if mt == "exact":
+        records = _filter(matches)
+        lines.append(f"[OK] Exact match in JA4DB ({len(records)} record(s))")
+        for r in records:
+            lines.append("---")
+            lines.extend(_record_lines(r))
+    elif mt == "near":
+        records = _filter(matches)
+        lines.append(f"[~] Near match: same cipher+extension hash, different ja4_a "
+                     f"({len(records)} record(s))")
+        for r in records:
+            lines.append("---")
+            lines.append(f"   ja4           {r.get('ja4_fingerprint')}")
+            lines.extend(_record_lines(r))
+    elif mt == "wildcard":
+        records = _filter(matches)
+        lines.append(f"[*] Wildcard match in JA4DB ({len(records)} record(s))")
+        for r in records[:25]:
+            lines.append("---")
+            lines.append(f"   ja4           {r.get('ja4_fingerprint')}")
+            lines.extend(_record_lines(r))
+        if len(records) > 25:
+            lines.append(f"   ... {len(records) - 25} more (full list in JSON output)")
+    elif mt == "partial":
+        c_hits = matches.get("cipher_matches", [])
+        e_hits = matches.get("extension_matches", [])
+        lines.append(f"[~] Partial: {len(c_hits)} cipher-hash neighbors, "
+                     f"{len(e_hits)} extension-hash neighbors")
+        if c_hits:
+            lines.append(f"   Cipher hash seen in:    {_top_apps(c_hits)}")
+        if e_hits:
+            lines.append(f"   Extension hash seen in: {_top_apps(e_hits)}")
+    else:
+        lines.append("[X] Not found in JA4DB")
+        lines.append("   Could be: custom client, new malware, recent software, IoT device, or proprietary tool.")
+        lines.append("   Pivot on User-Agent / src IP / dest, check threat intel, or run --vt with a VT Intelligence key.")
+    return "\n".join(lines)
+
+
+def format_vt(vt_result):
+    if not vt_result:
+        return ""
+    status = vt_result.get("status")
+    lines = ["\n--- VirusTotal ---", f"Query: {vt_result.get('query', '')}"]
+    if status == "not_configured":
+        lines.append("[!] " + vt_result.get("message", "VT not configured"))
+        return "\n".join(lines)
+    if status == "error":
+        lines.append("[!] " + vt_result.get("message", "error"))
+        return "\n".join(lines)
+    if status == "not_found":
+        lines.append("[X] " + vt_result.get("message", "no files"))
+        return "\n".join(lines)
+    lines.append(f"[OK] {vt_result.get('count', 0)} file(s) communicate with this JA4")
+    for f in vt_result.get("results", []):
+        lines.append("---")
+        lines.append(f"   sha256     {f.get('sha256')}")
+        lines.append(f"   name       {f.get('name')}")
+        lines.append(f"   type       {f.get('type')}")
+        lines.append(f"   verdict    malicious={f.get('malicious')} "
+                     f"suspicious={f.get('suspicious')} undetected={f.get('undetected')}")
+        if f.get("vt_link"):
+            lines.append(f"   link       {f['vt_link']}")
+        net = f.get("network")
+        if isinstance(net, dict):
+            for k in ("contacted_ips", "contacted_domains", "contacted_urls"):
+                vals = net.get(k)
+                if isinstance(vals, list) and vals:
+                    lines.append(f"   {k:<13} {', '.join(str(v) for v in vals[:5])}")
+    pivots = vt_result.get("network_pivots") or {}
+    if any(pivots.values()):
+        lines.append("---")
+        lines.append("Top network pivots across enriched files:")
+        for k, items in pivots.items():
+            if items:
+                lines.append(f"   {k}: " + ", ".join(f"{name} ({c})" for name, c in items[:5]))
+    return "\n".join(lines)
+
+
+# ----- CLI -----
 def main():
-    parser = argparse.ArgumentParser(description='JA4 Fingerprint Lookup Tool')
-    parser.add_argument('fingerprint', nargs='?', help='JA4/JA4H/JA4S fingerprint to lookup')
-    parser.add_argument('-f', '--file', help='File with fingerprints (one per line)')
-    parser.add_argument('-a', '--application', help='Filter by application name')
-    parser.add_argument('--verified-only', action='store_true', help='Show only verified entries')
-    parser.add_argument('--no-cache', action='store_true', help='Disable cache')
-    parser.add_argument('--parse', action='store_true', help='Parse fingerprint structure')
-    parser.add_argument('--csv', action='store_true', help='Output in CSV format')
-    
-    args = parser.parse_args()
-    
-    cache_dir = None if args.no_cache else ".ja4_cache"
+    p = argparse.ArgumentParser(
+        description="JA4 Fingerprint Lookup Tool (JA4DB + VirusTotal Intelligence)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Wildcards (CLI and VT): e.g. t13d190900_*_97f8aa674fd9 matches\n"
+            "JA4_A and JA4_C while allowing any cipher hash. *_<hash>_* and\n"
+            "t13* also work. See VirusTotal blog on JA4 hunting for examples."
+        ),
+    )
+    p.add_argument("fingerprint", nargs="?",
+                   help="JA4/JA4S/JA4H fingerprint or wildcard pattern (use * to wildcard a section)")
+    p.add_argument("-f", "--file", help="File with fingerprints (one per line)")
+    p.add_argument("-a", "--application", help="Filter results by application name")
+    p.add_argument("--verified-only", action="store_true", help="Show only verified entries")
+    p.add_argument("--no-cache", action="store_true", help="Disable local DB cache (slow)")
+    p.add_argument("--refresh", action="store_true", help="Force refresh of local JA4DB cache")
+    p.add_argument("--parse", action="store_true",
+                   help="Parse fingerprint structure with field descriptions")
+    p.add_argument("--csv", action="store_true", help="Print CSV (batch mode)")
+    p.add_argument("--vt", action="store_true",
+                   help="Also query VirusTotal Intelligence "
+                        "(needs VIRUSTOTAL_API_KEY; auto-enriches with contacted IPs/domains/URLs)")
+    p.add_argument("--no-vt-enrich", action="store_true",
+                   help="Skip per-file network enrichment in VT (faster, fewer API calls)")
+    p.add_argument("--vt-max-enrich", type=int, default=5,
+                   help="Max files to enrich with contacted IPs/domains/URLs (default: 5)")
+    p.add_argument("--vt-max-files", type=int, default=10,
+                   help="Max files to return from VT search (default: 10)")
+    p.add_argument("--yara", action="store_true",
+                   help="Print a VT YARA rule scaffold for the fingerprint")
+    p.add_argument("--json", dest="as_json", action="store_true",
+                   help="Print full result JSON to stdout")
+    p.add_argument("-o", "--output", default=None,
+                   help=f"Path to write JSON results (default: "
+                        f"{DEFAULT_OUTPUT_PREFIX}_<ISO8601 timestamp>.json). "
+                        "Use - to skip writing the file.")
+    args = p.parse_args()
+
+    cache_dir = None if args.no_cache else DEFAULT_CACHE_DIR
     lookup = JA4Lookup(cache_dir=cache_dir)
-    
-    # Batch processing from file
+    if args.refresh and cache_dir:
+        lookup.refresh(force=True)
+
+    vt = VirusTotalLookup() if args.vt else None
+    output = {"timestamp": datetime.now().isoformat(), "results": []}
+
+    def run_one(fp):
+        record = {"fingerprint": fp, "is_wildcard": has_wildcard(fp)}
+        if not has_wildcard(fp):
+            record["parsed"] = parse_ja4(fp)
+        matches, mt = lookup.lookup(fp)
+        record["ja4db"] = {"match_type": mt, "match_count":
+                           (len(matches) if isinstance(matches, list)
+                            else len(matches.get("cipher_matches", []))
+                                 + len(matches.get("extension_matches", []))),
+                           "matches": matches}
+        print(format_lookup(fp, matches, mt,
+                            app_filter=args.application,
+                            verified_only=args.verified_only))
+        if vt:
+            print("[*] Querying VirusTotal Intelligence ...", file=sys.stderr)
+            vt_res = vt.lookup_ja4(fp,
+                                   enrich=not args.no_vt_enrich,
+                                   max_enrich=args.vt_max_enrich,
+                                   max_files=args.vt_max_files)
+            record["virustotal"] = vt_res
+            print(format_vt(vt_res))
+        if args.yara:
+            rule = yara_rule_for(fp)
+            record["yara"] = rule
+            print("\n--- YARA rule ---\n" + rule)
+        output["results"].append(record)
+
     if args.file:
         with open(args.file) as f:
-            fingerprints = [line.strip() for line in f if line.strip()]
-        results = lookup.batch_lookup(fingerprints)
-        
+            fps = [line.strip() for line in f if line.strip()]
         if args.csv:
-            print("fingerprint,status,application,device,os,verified,observation_count")
-        
-        for fp, data in results.items():
-            if data.get('status') == 'not_found':
-                if args.csv:
-                    print(f"{fp},not_found,,,,,")
+            results = lookup.batch_lookup(fps)
+            print("fingerprint,match_type,application,device,os,verified,observation_count")
+            for fp, (matches, mt) in results.items():
+                if mt in ("exact", "near", "wildcard") and isinstance(matches, list):
+                    for r in matches:
+                        if args.application and (r.get("application") or "").lower() != args.application.lower():
+                            continue
+                        if args.verified_only and not r.get("verified"):
+                            continue
+                        print(f'{fp},{mt},"{r.get("application","") or ""}",'
+                              f'"{r.get("device","") or ""}","{r.get("os","") or ""}",'
+                              f'{r.get("verified","")},{r.get("observation_count","") or ""}')
                 else:
-                    print(f"\n❌ {fp}")
-                    print(f"   Status: Not in database")
-                    print(f"   Action: Investigate further - could be custom app or new threat")
-            elif isinstance(data, list):
-                for entry in data:
-                    if args.application and entry.get('application') != args.application:
-                        continue
-                    if args.verified_only and not entry.get('verified'):
-                        continue
-                    
-                    if args.csv:
-                        print(f"{fp},found,{entry.get('application','')},{entry.get('device','')},{entry.get('os','')},{entry.get('verified','')},{entry.get('observation_count','')}")
-                    else:
-                        print(f"\n✓ {fp}")
-                        print(f"   App: {entry.get('application', 'Unknown')}")
-                        print(f"   Device: {entry.get('device', 'N/A')}")
-                        print(f"   OS: {entry.get('os', 'N/A')}")
-                        print(f"   Verified: {entry.get('verified', False)}")
-    
-    # Single lookup
+                    print(f"{fp},{mt},,,,,")
+        else:
+            for fp in fps:
+                run_one(fp)
     elif args.fingerprint:
         if args.parse:
-            parsed = lookup.parse_ja4(args.fingerprint)
+            parsed = parse_ja4(args.fingerprint)
             if parsed:
                 print(json.dumps(parsed, indent=2))
-        
-        result = lookup.lookup(args.fingerprint)
-        
-        if result.get('status') == 'not_found':
-            print(f"\n❌ Fingerprint not found in JA4DB")
-            print(f"\nFingerprint: {args.fingerprint}")
-            print(f"\nThis could indicate:")
-            print(f"  • Custom or proprietary application")
-            print(f"  • New malware variant")
-            print(f"  • Uncommon TLS client configuration")
-            print(f"  • Recently released software not yet catalogued")
-            print(f"\nNext steps:")
-            print(f"  1. Check your logs for associated User-Agent, source IP, destination")
-            print(f"  2. Cross-reference with your threat intel feeds")
-            print(f"  3. If benign, consider contributing to ja4db.com")
-        else:
-            print(json.dumps(result, indent=2))
-    
+            else:
+                print("[!] Cannot parse — fingerprint contains wildcards or is malformed",
+                      file=sys.stderr)
+        run_one(args.fingerprint)
     else:
-        parser.print_help()
+        p.print_help()
+        return
+
+    if args.as_json:
+        print(json.dumps(output, indent=2, default=str))
+
+    if args.output != "-":
+        out_path = Path(args.output) if args.output else Path(default_output_path())
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(output, f, indent=2, default=str)
+        print(f"\n[+] JSON results written to {out_path}", file=sys.stderr)
+
 
 if __name__ == "__main__":
     main()

@@ -9,7 +9,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import HTTPException
 import re
 import json
-from ja4lookr import JA4Lookup, VirusTotalLookup
+from ja4lookr import JA4Lookup, VirusTotalLookup, parse_ja4
 from datetime import datetime
 import os
 from dotenv import load_dotenv
@@ -55,30 +55,18 @@ def validate_fingerprint(fingerprint):
 
     return True, fingerprint
 
-def format_result(result, fingerprint):
-    """Format API result for display"""
-    if result.get('status') == 'not_found':
-        return {
-            'found': False,
-            'fingerprint': fingerprint,
-            'message': result.get('message'),
-            'recommendation': result.get('recommendation')
-        }
-    elif result.get('status') == 'error':
-        return {
-            'error': True,
-            'fingerprint': fingerprint,
-            'message': result.get('error')
-        }
-    else:
-        # Process successful results
-        entries = result if isinstance(result, list) else [result]
-        return {
-            'found': True,
-            'fingerprint': fingerprint,
-            'entries': entries,
-            'count': len(entries)
-        }
+def format_result(matches, match_type, fingerprint):
+    """Format JA4Lookup result for the templates."""
+    base = {'fingerprint': fingerprint, 'match_type': match_type}
+    if match_type in ('exact', 'near'):
+        return {**base, 'found': True, 'entries': matches, 'count': len(matches)}
+    if match_type == 'partial':
+        return {**base, 'found': False, 'partial': True,
+                'cipher_matches': matches.get('cipher_matches', []),
+                'extension_matches': matches.get('extension_matches', [])}
+    return {**base, 'found': False,
+            'message': 'Fingerprint not found in JA4DB',
+            'recommendation': 'Run with --vt or pivot on User-Agent / IP / dest'}
 
 @app.route('/')
 def index():
@@ -101,11 +89,11 @@ def lookup():
 
     # Perform lookup
     try:
-        api_result = ja4_lookup.lookup(fingerprint)
-        formatted = format_result(api_result, fingerprint)
+        matches, match_type = ja4_lookup.lookup(fingerprint)
+        formatted = format_result(matches, match_type, fingerprint)
 
         # Parse fingerprint structure if available
-        parsed = ja4_lookup.parse_ja4(fingerprint)
+        parsed = parse_ja4(fingerprint)
 
         # VirusTotal lookup (if configured)
         vt_result = None
@@ -162,10 +150,10 @@ def batch_lookup():
 
         # Format results
         formatted_results = []
-        for fp, api_result in results.items():
+        for fp, (matches, match_type) in results.items():
             formatted_results.append({
                 'fingerprint': fp,
-                'data': format_result(api_result, fp)
+                'data': format_result(matches, match_type, fp)
             })
 
         return render_template('batch_result.html',
@@ -189,12 +177,13 @@ def api_lookup(fingerprint):
     fingerprint = result
 
     try:
-        api_result = ja4_lookup.lookup(fingerprint)
-        parsed = ja4_lookup.parse_ja4(fingerprint)
+        matches, match_type = ja4_lookup.lookup(fingerprint)
+        parsed = parse_ja4(fingerprint)
 
         return jsonify({
             'fingerprint': fingerprint,
-            'result': api_result,
+            'match_type': match_type,
+            'matches': matches,
             'parsed': parsed,
             'timestamp': datetime.now().isoformat()
         })
