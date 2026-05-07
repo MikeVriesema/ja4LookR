@@ -131,6 +131,18 @@ def has_wildcard(fp):
     return "*" in fp
 
 
+def defang(value):
+    """Defang an IP / domain / URL so it can't be accidentally clicked.
+
+    http://evil.com/x -> hxxp://evil[.]com/x
+    1.2.3.4           -> 1.2.3[.]4
+    """
+    if not isinstance(value, str):
+        return value
+    out = value.replace("https://", "hxxps://").replace("http://", "hxxp://")
+    return out.replace(".", "[.]")
+
+
 def wildcard_to_regex(pattern):
     """Convert a JA4 wildcard pattern to a compiled regex. `*` matches any chars."""
     escaped = re.escape(pattern).replace(r"\*", ".*")
@@ -300,7 +312,7 @@ class VirusTotalLookup:
         return data.get("data", [])
 
     def get_file_network(self, sha256, limit=10):
-        """Pull contacted IPs / domains / URLs for one file."""
+        """Pull contacted IPs / domains / URLs for one file. Values are defanged."""
         out = {}
         for endpoint, key in (("contacted_ips", "contacted_ips"),
                               ("contacted_domains", "contacted_domains"),
@@ -309,10 +321,11 @@ class VirusTotalLookup:
                 data = self._get(f"/files/{sha256}/{endpoint}", params={"limit": limit})
                 items = data.get("data", [])
                 if endpoint == "contacted_urls":
-                    out[key] = [(it.get("attributes", {}).get("url") or it.get("id"))
-                                for it in items]
+                    raw = [(it.get("attributes", {}).get("url") or it.get("id"))
+                           for it in items]
                 else:
-                    out[key] = [it.get("id") for it in items]
+                    raw = [it.get("id") for it in items]
+                out[key] = [defang(v) for v in raw if v]
             except (PermissionError, RuntimeError, requests.exceptions.RequestException) as e:
                 out[key] = {"error": str(e)}
         return out
