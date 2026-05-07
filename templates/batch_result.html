@@ -80,20 +80,12 @@
         white-space: nowrap;
     }
 
-    .status-found {
-        background: #d1fae5;
-        color: #065f46;
-    }
-
-    .status-not-found {
-        background: #fee2e2;
-        color: #991b1b;
-    }
-
-    .status-error {
-        background: #fef3c7;
-        color: #92400e;
-    }
+    .status-exact, .status-found { background: #d1fae5; color: #065f46; }
+    .status-near    { background: #dbeafe; color: #1e3a8a; }
+    .status-wildcard{ background: #ede9fe; color: #5b21b6; }
+    .status-partial { background: #fef3c7; color: #92400e; }
+    .status-not-found { background: #fee2e2; color: #991b1b; }
+    .status-error  { background: #fef3c7; color: #92400e; }
 
     .app-list {
         display: flex;
@@ -215,7 +207,7 @@
         </div>
         <div class="stat-item">
             <div class="stat-value" id="error-count">0</div>
-            <div class="stat-label">Errors</div>
+            <div class="stat-label">Partial</div>
         </div>
     </div>
 </div>
@@ -234,40 +226,47 @@
 <div class="filter-bar">
     <strong>Filter Results:</strong>
     <button class="filter-btn active" onclick="filterResults('all')">All</button>
-    <button class="filter-btn" onclick="filterResults('found')">Found Only</button>
+    <button class="filter-btn" onclick="filterResults('found')">Matches Only</button>
+    <button class="filter-btn" onclick="filterResults('partial')">Partial Only</button>
     <button class="filter-btn" onclick="filterResults('not-found')">Not Found Only</button>
-    <button class="filter-btn" onclick="filterResults('error')">Errors Only</button>
 </div>
 
 <div id="results-container">
     {% for item in results %}
-    <div class="result-item" data-status="{% if item.data.found %}found{% elif item.data.error %}error{% else %}not-found{% endif %}">
+    <div class="result-item" data-status="{% if item.data.found %}found{% elif item.data.partial %}partial{% else %}not-found{% endif %}">
         <div class="result-item-header">
             <div class="fingerprint-code">{{ item.fingerprint }}</div>
-            {% if item.data.found %}
-                <span class="status-badge status-found">✓ Found</span>
-            {% elif item.data.error %}
-                <span class="status-badge status-error">⚠ Error</span>
+            {% if item.data.match_type == 'exact' %}
+                <span class="status-badge status-exact">✓ Exact</span>
+            {% elif item.data.match_type == 'near' %}
+                <span class="status-badge status-near">~ Near</span>
+            {% elif item.data.match_type == 'wildcard' %}
+                <span class="status-badge status-wildcard">∗ Wildcard</span>
+            {% elif item.data.match_type == 'partial' %}
+                <span class="status-badge status-partial">~ Partial</span>
             {% else %}
                 <span class="status-badge status-not-found">✗ Not Found</span>
             {% endif %}
         </div>
 
-        {% if item.data.error %}
-            <div class="error-message">
-                <strong>Error:</strong> {{ item.data.message }}
+        {% if item.data.partial %}
+            <div class="not-found-message" style="color:#92400e;">
+                <strong>Partial:</strong> {{ item.data.cipher_matches|length }} cipher-hash neighbors,
+                {{ item.data.extension_matches|length }} extension-hash neighbors.
             </div>
         {% elif not item.data.found %}
             <div class="not-found-message">
-                <strong>Not in database</strong> - {{ item.data.message }}
+                <strong>Not in JA4DB.</strong> {{ item.data.message }}
             </div>
         {% else %}
+            <div style="font-size: 13px; color: #6b7280; margin-bottom: 8px;">{{ item.data.match_label }}</div>
             <div class="app-list">
                 {% for entry in item.data.entries %}
                     <div class="app-tag {% if entry.verified %}verified{% endif %}">
-                        <strong>{{ entry.application or 'Unknown' }}</strong>
+                        <strong>{{ entry.application or entry.library or 'Unknown' }}</strong>
                         {% if entry.verified %} ✓{% endif %}
                         {% if entry.device %}<br><small>{{ entry.device }}</small>{% endif %}
+                        {% if entry.os %}<br><small>{{ entry.os }}</small>{% endif %}
                     </div>
                 {% endfor %}
             </div>
@@ -289,20 +288,19 @@
 // Count results
 window.addEventListener('DOMContentLoaded', function() {
     const items = document.querySelectorAll('.result-item');
-    let foundCount = 0;
-    let notFoundCount = 0;
-    let errorCount = 0;
+    let foundCount = 0, partialCount = 0, notFoundCount = 0;
 
     items.forEach(item => {
         const status = item.dataset.status;
         if (status === 'found') foundCount++;
+        else if (status === 'partial') partialCount++;
         else if (status === 'not-found') notFoundCount++;
-        else if (status === 'error') errorCount++;
     });
 
     document.getElementById('found-count').textContent = foundCount;
     document.getElementById('not-found-count').textContent = notFoundCount;
-    document.getElementById('error-count').textContent = errorCount;
+    const errEl = document.getElementById('error-count');
+    if (errEl) errEl.textContent = partialCount;
 });
 
 // Filter results

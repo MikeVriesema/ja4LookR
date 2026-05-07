@@ -9,7 +9,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import HTTPException
 import re
 import json
-from ja4lookr import JA4Lookup, VirusTotalLookup, parse_ja4
+from ja4lookr import JA4Lookup, VirusTotalLookup, parse_ja4, yara_rule_for, has_wildcard
 from datetime import datetime
 import os
 from dotenv import load_dotenv
@@ -34,39 +34,48 @@ ja4_lookup = JA4Lookup()
 # Initialize VirusTotal lookup (optional, requires API key)
 vt_lookup = VirusTotalLookup()
 
-# Validation regex for JA4 fingerprints (basic pattern)
-JA4_PATTERN = re.compile(r'^[a-z0-9_]{20,}$', re.IGNORECASE)
+# Allow alphanumerics, underscores, and `*` wildcards used for hunting patterns
+JA4_PATTERN = re.compile(r'^[a-z0-9_*]{8,}$', re.IGNORECASE)
+
 
 def validate_fingerprint(fingerprint):
-    """Validate JA4 fingerprint format"""
+    """Validate a JA4 fingerprint or wildcard hunting pattern."""
     if not fingerprint:
         return False, "Fingerprint cannot be empty"
-
-    # Remove whitespace
     fingerprint = fingerprint.strip()
-
-    # Length check
-    if len(fingerprint) < 20 or len(fingerprint) > 200:
+    if len(fingerprint) < 8 or len(fingerprint) > 200:
         return False, "Invalid fingerprint length"
-
-    # Pattern check
     if not JA4_PATTERN.match(fingerprint):
-        return False, "Invalid fingerprint format. Expected alphanumeric with underscores"
-
+        return False, "Invalid format. Expected alphanumerics, underscores, and optional * wildcards"
     return True, fingerprint
+
+MATCH_TYPE_LABEL = {
+    'exact': 'Exact match in JA4DB',
+    'near': 'Near match (same cipher + extension hash, different ja4_a)',
+    'wildcard': 'Wildcard pattern match',
+    'partial': 'Partial match (cipher hash or extension hash only)',
+    'none': 'Not found in JA4DB',
+}
+
 
 def format_result(matches, match_type, fingerprint):
     """Format JA4Lookup result for the templates."""
-    base = {'fingerprint': fingerprint, 'match_type': match_type}
-    if match_type in ('exact', 'near'):
+    base = {
+        'fingerprint': fingerprint,
+        'match_type': match_type,
+        'match_label': MATCH_TYPE_LABEL.get(match_type, match_type),
+        'is_wildcard': has_wildcard(fingerprint),
+    }
+    if match_type in ('exact', 'near', 'wildcard'):
         return {**base, 'found': True, 'entries': matches, 'count': len(matches)}
     if match_type == 'partial':
         return {**base, 'found': False, 'partial': True,
                 'cipher_matches': matches.get('cipher_matches', []),
-                'extension_matches': matches.get('extension_matches', [])}
+                'extension_matches': matches.get('extension_matches', []),
+                'message': 'Cipher hash or extension hash matched, but no exact/near record exists.'}
     return {**base, 'found': False,
             'message': 'Fingerprint not found in JA4DB',
-            'recommendation': 'Run with --vt or pivot on User-Agent / IP / dest'}
+            'recommendation': 'Try a wildcard pattern, or pivot via VirusTotal / threat intel.'}
 
 @app.route('/')
 def index():
@@ -76,36 +85,45 @@ def index():
 @app.route('/lookup', methods=['POST'])
 @limiter.limit("30 per minute")
 def lookup():
-    """Handle single fingerprint lookup"""
+    """Handle single fingerprint or wildcard lookup."""
     fingerprint = request.form.get('fingerprint', '').strip()
+    enrich_vt = request.form.get('enrich_vt', 'on') == 'on'
 
-    # Validate input
     valid, result = validate_fingerprint(fingerprint)
     if not valid:
         flash(result, 'error')
         return redirect(url_for('index'))
-
     fingerprint = result
 
-    # Perform lookup
     try:
         matches, match_type = ja4_lookup.lookup(fingerprint)
         formatted = format_result(matches, match_type, fingerprint)
-
-        # Parse fingerprint structure if available
         parsed = parse_ja4(fingerprint)
+        yara_rule = yara_rule_for(fingerprint)
 
-        # VirusTotal lookup (if configured)
         vt_result = None
         if vt_lookup.is_configured():
-            vt_result = vt_lookup.lookup_ja4(fingerprint)
+            vt_result = vt_lookup.lookup_ja4(fingerprint, enrich=enrich_vt)
+
+        export_payload = {
+            'fingerprint': fingerprint,
+            'match_type': match_type,
+            'is_wildcard': has_wildcard(fingerprint),
+            'parsed': parsed,
+            'ja4db': {'match_type': match_type, 'matches': matches},
+            'virustotal': vt_result,
+            'yara': yara_rule,
+            'timestamp': datetime.now().isoformat(),
+        }
 
         return render_template('result.html',
-                             result=formatted,
-                             parsed=parsed,
-                             vt_result=vt_result,
-                             vt_configured=vt_lookup.is_configured(),
-                             timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                               result=formatted,
+                               parsed=parsed,
+                               vt_result=vt_result,
+                               vt_configured=vt_lookup.is_configured(),
+                               yara_rule=yara_rule,
+                               export_payload=export_payload,
+                               timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     except Exception as e:
         flash(f'Lookup error: {str(e)}', 'error')
         return redirect(url_for('index'))
@@ -165,27 +183,34 @@ def batch_lookup():
         flash(f'Batch lookup error: {str(e)}', 'error')
         return redirect(url_for('index'))
 
-@app.route('/api/lookup/<fingerprint>')
+@app.route('/api/lookup/<path:fingerprint>')
 @limiter.limit("60 per minute")
 def api_lookup(fingerprint):
-    """REST API endpoint for programmatic access"""
-    # Validate input
+    """REST API endpoint with full feature parity (JA4DB + VT + YARA)."""
     valid, result = validate_fingerprint(fingerprint)
     if not valid:
         return jsonify({'error': result}), 400
-
     fingerprint = result
+
+    include_vt = request.args.get('vt', '0') in ('1', 'true', 'yes')
+    enrich_vt = request.args.get('enrich', '1') in ('1', 'true', 'yes')
 
     try:
         matches, match_type = ja4_lookup.lookup(fingerprint)
         parsed = parse_ja4(fingerprint)
+        vt_result = None
+        if include_vt and vt_lookup.is_configured():
+            vt_result = vt_lookup.lookup_ja4(fingerprint, enrich=enrich_vt)
 
         return jsonify({
             'fingerprint': fingerprint,
+            'is_wildcard': has_wildcard(fingerprint),
             'match_type': match_type,
             'matches': matches,
             'parsed': parsed,
-            'timestamp': datetime.now().isoformat()
+            'virustotal': vt_result,
+            'yara': yara_rule_for(fingerprint),
+            'timestamp': datetime.now().isoformat(),
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -216,4 +241,4 @@ def handle_exception(e):
 if __name__ == '__main__':
     # Development server - localhost only for security
     # Use production WSGI server with proper network config for production
-    app.run(host='127.0.0.1', port=5000, debug=False)
+    app.run(host='127.0.0.1', port=5009, debug=False)

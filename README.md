@@ -88,7 +88,7 @@ enrichment entirely with `--no-vt-enrich`.
 
 ## Usage
 
-### Web Interface (Recommended for most users)
+### Web Interface
 
 Start the web server:
 
@@ -107,14 +107,22 @@ waitress-serve --host=127.0.0.1 --port=5000 app:app
 
 Then open your browser to `http://localhost:5000`
 
-**Web Features:**
-- Single fingerprint lookup with detailed analysis
-- Batch lookup (up to 100 fingerprints)
-- Export results as JSON
-- Filter and sort results
+**Web Features (full parity with the CLI):**
+- Single fingerprint or **wildcard pattern** lookup (e.g. `t13d190900_*_97f8aa674fd9`)
+- Match-type rendering: Exact / Near / Wildcard / Partial / Not Found
+- Decoded JA4 components (transport, TLS version, SNI flag, counts, ALPN)
+- VirusTotal pivot with per-file **contacted IPs / domains / URLs (defanged)**
+  and aggregated network pivots across the result set
+- Inline **YARA rule** scaffold with copy-to-clipboard
+- One-click **JSON export** of the full result payload
+- Batch lookup (up to 100 fingerprints, wildcards accepted)
 - Responsive design for mobile and desktop
 
-### CLI Interface (For power users)
+### CLI Interface
+
+The CLI shares the same engine as the web app — every match type, VirusTotal
+pivot, network enrichment, YARA scaffold, and JSON output is available in
+both. Pick whichever feels better for the moment; nothing is locked away.
 
 First run downloads the full JA4DB (~73k records, ~16s) and gzip-caches it
 under `.ja4_cache/ja4db_full.json.gz`. Subsequent runs load from disk in
@@ -222,6 +230,10 @@ curl http://localhost:5000/api/lookup/t13d1516h2_8daaf6152771_b0da82dd1658
 # Health check
 curl http://localhost:5000/health
 ```
+
+Optional query parameters:
+- `vt=1` — also run the VirusTotal Intelligence pivot (needs `VIRUSTOTAL_API_KEY`)
+- `enrich=1` — when `vt=1`, fetch contacted IPs/domains/URLs per file (default on)
 
 **Response Format:**
 

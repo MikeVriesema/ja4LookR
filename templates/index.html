@@ -101,12 +101,15 @@
 {% block content %}
 <div class="info-box">
     <h3>About JA4 Fingerprints</h3>
-    <p>JA4 is a network fingerprinting method that identifies TLS clients based on their handshake characteristics.
-       Use this tool to identify applications, detect anomalies, and investigate potential threats.</p>
+    <p>JA4 identifies TLS clients by their handshake characteristics — useful for application identification,
+       anomaly detection, and threat hunting. JA4LookR resolves fingerprints against the local JA4DB cache
+       (exact, near, wildcard, and partial matches) and optionally pivots to VirusTotal Intelligence with
+       per-file network indicators.</p>
     <ul>
         <li><strong>JA4</strong>: TLS client fingerprinting</li>
         <li><strong>JA4H</strong>: HTTP client fingerprinting</li>
         <li><strong>JA4S</strong>: TLS server fingerprinting</li>
+        <li><strong>Wildcards</strong>: use <code>*</code> for any section, e.g. <code>t13d190900_*_97f8aa674fd9</code></li>
     </ul>
 </div>
 
@@ -118,7 +121,7 @@
 <div id="single" class="tab-content active">
     <form method="POST" action="/lookup">
         <div class="form-group">
-            <label for="fingerprint">JA4 Fingerprint:</label>
+            <label for="fingerprint">JA4 Fingerprint or Wildcard Pattern:</label>
             <input type="text"
                    id="fingerprint"
                    name="fingerprint"
@@ -126,8 +129,21 @@
                    required
                    autocomplete="off">
             <div class="example">
-                Example: t13d1516h2_8daaf6152771_b0da82dd1658
+                Examples:<br>
+                &nbsp;&nbsp;t13d1516h2_8daaf6152771_b0da82dd1658<br>
+                &nbsp;&nbsp;t13d190900_*_97f8aa674fd9 &nbsp;(wildcard cipher)<br>
+                &nbsp;&nbsp;*_8daaf6152771_*       &nbsp;(any client sharing this cipher hash)
             </div>
+        </div>
+
+        <div class="form-group" style="margin-top: 10px;">
+            <label style="display: flex; align-items: center; gap: 8px; font-weight: normal;">
+                <input type="checkbox" name="enrich_vt" checked>
+                <span>Enrich VirusTotal hits with contacted IPs / domains / URLs (defanged)</span>
+            </label>
+            <small style="color: #6b7280; display: block; margin-top: 5px;">
+                Disable for faster lookups when VT quota matters. Has no effect if VT is not configured.
+            </small>
         </div>
 
         <button type="submit" class="btn">Lookup Fingerprint</button>
@@ -140,10 +156,10 @@
             <label for="fingerprints">JA4 Fingerprints (one per line, max 100):</label>
             <textarea id="fingerprints"
                       name="fingerprints"
-                      placeholder="t13d1516h2_8daaf6152771_b0da82dd1658&#10;t13d1517h2_5b57614c22b0_3d7a3b2f1c8e&#10;q13d0312h3_55b375c5d22e_06cda9e17597"
+                      placeholder="t13d1516h2_8daaf6152771_b0da82dd1658&#10;t13d190900_*_97f8aa674fd9&#10;q13d0312h3_55b375c5d22e_06cda9e17597"
                       required></textarea>
             <small style="color: #6b7280; margin-top: 5px; display: block;">
-                Enter up to 100 fingerprints, one per line
+                Up to 100 fingerprints, one per line. Wildcard patterns are accepted.
             </small>
         </div>
 
@@ -153,15 +169,20 @@
 
 <div class="api-info">
     <h3>🔌 API Access</h3>
-    <p>Programmatic access available via REST API:</p>
+    <p>Programmatic access via REST API — same parity as the web form
+       (JA4DB matches, parsed components, optional VirusTotal pivot, YARA rule):</p>
     <div class="example" style="margin-top: 15px;">
-        GET /api/lookup/&lt;fingerprint&gt;
+        GET /api/lookup/&lt;fingerprint&gt;?vt=1&amp;enrich=1
     </div>
-    <p style="margin-top: 10px;">Example:</p>
+    <p style="margin-top: 10px;">Examples:</p>
     <div class="example">
-        curl http://localhost:5000/api/lookup/t13d1516h2_8daaf6152771_b0da82dd1658
+        curl http://localhost:5000/api/lookup/t13d1516h2_8daaf6152771_b0da82dd1658<br>
+        curl 'http://localhost:5000/api/lookup/t13d190900_*_97f8aa674fd9?vt=1'
     </div>
-    <p style="margin-top: 15px;"><strong>CLI Tool:</strong> For power users, use <code>python3 ja4lookr.py --help</code></p>
+    <p style="margin-top: 15px; color: #6b7280;">
+        Prefer the terminal? <code>python3 ja4lookr.py --help</code> exposes the same engine
+        with batch CSV, JSON file output, and YARA generation.
+    </p>
 </div>
 
 <script>
