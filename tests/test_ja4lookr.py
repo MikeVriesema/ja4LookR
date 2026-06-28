@@ -82,3 +82,10 @@ from datetime import timedelta  # noqa: E402
 def test_default_cache_window_is_one_hour():
     lk = JA4Lookup(cache_dir=None)
     assert lk.cache_duration == timedelta(hours=1)
+
+
+def test_indexes_include_ac_and_struct():
+    lk = make_lookup()
+    assert ("t13d1516h2", "d8a2da3f94cd") in lk._indexes["ac"]
+    # struct is a list of (record, components, risk) triples for hunting.
+    assert any(comp["sni"]["code"] == "i" for _, comp, _ in lk._indexes["struct"])

@@ -262,7 +262,8 @@ class JA4Lookup:
     def _build_indexes(self):
         if self._indexes is not None:
             return
-        exact, cipher_idx, ext_idx = {}, {}, {}
+        exact, cipher_idx, ext_idx, ac_idx = {}, {}, {}, {}
+        struct = []
         for r in self._db:
             for field in self.FP_FIELDS:
                 fp = r.get(field)
@@ -270,10 +271,15 @@ class JA4Lookup:
                     exact.setdefault(fp.lower(), []).append(r)
             ja4 = r.get("ja4_fingerprint")
             if ja4 and ja4.count("_") == 2:
-                _, b, c = ja4.split("_")
+                a, b, c = ja4.split("_")
                 cipher_idx.setdefault(b.lower(), []).append(r)
                 ext_idx.setdefault(c.lower(), []).append(r)
-        self._indexes = {"exact": exact, "cipher": cipher_idx, "extension": ext_idx}
+                ac_idx.setdefault((a.lower(), c.lower()), []).append(r)
+                parsed = parse_ja4(ja4)
+                if parsed:
+                    struct.append((r, parsed["components"], parsed["risk"]))
+        self._indexes = {"exact": exact, "cipher": cipher_idx,
+                         "extension": ext_idx, "ac": ac_idx, "struct": struct}
 
     def lookup(self, fingerprint):
         """Return (matches, match_type).
