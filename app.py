@@ -9,7 +9,8 @@ from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import HTTPException
 import re
 import json
-from ja4lookr import JA4Lookup, VirusTotalLookup, parse_ja4, yara_rule_for, has_wildcard
+from ja4lookr import (JA4Lookup, VirusTotalLookup, parse_ja4, yara_rule_for,
+                      has_wildcard, is_browser_record)
 from datetime import datetime
 import os
 from dotenv import load_dotenv
@@ -53,6 +54,7 @@ MATCH_TYPE_LABEL = {
     'exact': 'Exact match in JA4DB',
     'near': 'Near match (same cipher + extension hash, different ja4_a)',
     'wildcard': 'Wildcard pattern match',
+    'cipher_variant': 'Cipher variant (same a+c, different cipher hash — possible randomization/mimicry)',
     'partial': 'Partial match (cipher hash or extension hash only)',
     'none': 'Not found in JA4DB',
 }
@@ -66,8 +68,11 @@ def format_result(matches, match_type, fingerprint):
         'match_label': MATCH_TYPE_LABEL.get(match_type, match_type),
         'is_wildcard': has_wildcard(fingerprint),
     }
-    if match_type in ('exact', 'near', 'wildcard'):
-        return {**base, 'found': True, 'entries': matches, 'count': len(matches)}
+    if match_type in ('exact', 'near', 'wildcard', 'cipher_variant'):
+        result = {**base, 'found': True, 'entries': matches, 'count': len(matches)}
+        if match_type == 'cipher_variant':
+            result['browser_mimicry'] = any(is_browser_record(r) for r in matches)
+        return result
     if match_type == 'partial':
         return {**base, 'found': False, 'partial': True,
                 'cipher_matches': matches.get('cipher_matches', []),
@@ -79,8 +84,9 @@ def format_result(matches, match_type, fingerprint):
 
 @app.route('/')
 def index():
-    """Home page with lookup form"""
-    return render_template('index.html')
+    """Home page with lookup form."""
+    return render_template('index.html',
+                           vt_configured=vt_lookup.is_configured())
 
 @app.route('/lookup', methods=['POST'])
 @limiter.limit("30 per minute")
@@ -182,6 +188,48 @@ def batch_lookup():
     except Exception as e:
         flash(f'Batch lookup error: {str(e)}', 'error')
         return redirect(url_for('index'))
+
+HUNT_CRITERIA = ("legacy-tls", "no-sni", "no-alpn", "risky", "quic")
+
+
+@app.route('/hunt', methods=['POST'])
+@limiter.limit("20 per minute")
+def hunt():
+    """Hunt the JA4DB by structural criteria."""
+    criteria = [c for c in request.form.getlist('criteria') if c in HUNT_CRITERIA]
+    if not criteria:
+        flash('Select at least one hunting criterion', 'error')
+        return redirect(url_for('index'))
+    try:
+        records = ja4_lookup.hunt(criteria, limit=500)
+        return render_template('hunt_result.html',
+                               criteria=criteria, records=records,
+                               count=len(records),
+                               timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    except Exception as e:
+        flash(f'Hunt error: {str(e)}', 'error')
+        return redirect(url_for('index'))
+
+
+@app.route('/search', methods=['POST'])
+@limiter.limit("30 per minute")
+def search():
+    """Reverse lookup by application / User-Agent / metadata."""
+    term = request.form.get('term', '').strip()
+    field = request.form.get('field', '').strip() or None
+    if not term:
+        flash('Enter a search term', 'error')
+        return redirect(url_for('index'))
+    try:
+        records = ja4_lookup.search_metadata(term, field=field, limit=500)
+        return render_template('search_result.html',
+                               term=term, field=field, records=records,
+                               count=len(records),
+                               timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    except Exception as e:
+        flash(f'Search error: {str(e)}', 'error')
+        return redirect(url_for('index'))
+
 
 @app.route('/api/lookup/<path:fingerprint>')
 @limiter.limit("60 per minute")
