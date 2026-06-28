@@ -120,6 +120,18 @@ box → `/search` route.
 - Confirm env loading: both `VIRUSTOTAL_API_KEY` and `VT_API_KEY` honored;
   `load_dotenv()` runs before instantiation in both entry points.
 
+### 5b. Fresh JA4DB (≤ 1 hour)
+
+Lower the cache-freshness window from 1 day to **1 hour** so a run never uses a
+DB pulled more than an hour ago.
+- Replace `DB_CACHE_DAYS = 1` with an hour-based window
+  (`DB_CACHE_MAX_AGE = timedelta(hours=1)`); `JA4Lookup` takes a `max_age`
+  param. `_cache_fresh()` compares against this window.
+- On any lookup/hunt/search, `_load()` already refreshes when the cache is
+  stale; with the 1-hour window this guarantees data pulled within the last
+  hour. `--refresh` still forces an immediate live pull.
+- Web app and CLI share the same default, so both honor the 1-hour rule.
+
 ### 6. Efficiency pass
 
 Fold actionable wins into `_build_indexes` (single pass over the DB):
@@ -140,9 +152,31 @@ full-scan cost, batch behavior) documented in the README efficiency notes.
   tiers (exact / near / cipher_variant / partial / none); `hunt` filters;
   `search_metadata`; `wildcard_to_regex`; `defang`; `yara_rule_for`.
 - Add `pytest` to `requirements.txt`.
-- README: risk/flags section, hunting filters, reverse search, `cipher_variant`
-  tier, VT key setup + `--vt-check`, ja4db-search comparison table, and a
-  hunt.io-inspired "field guide" built around the four C2 signatures.
+- README: rewritten clearly with every new capability documented for **both
+  CLI and web** — risk/flags section, hunting filters, reverse search,
+  `cipher_variant` tier, the 1-hour live-refresh behavior, VT key setup +
+  `--vt-check`, ja4db-search comparison table, and a hunt.io-inspired "field
+  guide" built around the four C2 signatures. Each feature shows the CLI
+  invocation and the web equivalent.
+- **Web UI "About" panel** gains a clear plain-language explainer of how the
+  risk engine works: what each flag means (legacy TLS, IP-only/no-SNI `i`,
+  ALPN `00`), how the combo escalation reaches `high`, and worked examples
+  (clean Chrome vs. the C2 signatures). Lives in the `index.html` About
+  section (and/or `base.html`).
+
+## CLI / Web parity
+
+Every feature ships in **both** the CLI and the web UI, backed by the same
+`ja4lookr.py` functions:
+
+| Feature              | CLI                              | Web                          |
+|----------------------|----------------------------------|------------------------------|
+| Risk flags           | shown in `format_lookup`         | result page + About explainer|
+| Hunt filters         | `--hunt legacy-tls,no-sni,...`   | Hunt panel → `/hunt`         |
+| Reverse search       | `--search TERM [--field ...]`    | search box → `/search`       |
+| `cipher_variant` tier| automatic in lookup output       | result page tier + note      |
+| VT key check         | `--vt-check`                     | VT status indicator          |
+| 1-hour live refresh  | shared default                   | shared default               |
 
 ## Build approach
 
