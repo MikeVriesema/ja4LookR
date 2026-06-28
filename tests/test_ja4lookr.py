@@ -74,3 +74,11 @@ def test_risk_legacy_tls_is_high():
 def test_assess_risk_direct_call():
     r = assess_risk("t", "13", "i", "00", 19, 8)
     assert r["level"] == "high"
+
+
+from datetime import timedelta  # noqa: E402
+
+
+def test_default_cache_window_is_one_hour():
+    lk = JA4Lookup(cache_dir=None)
+    assert lk.cache_duration == timedelta(hours=1)

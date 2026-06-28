@@ -31,7 +31,7 @@ except ImportError:
 JA4DB_URL = "https://ja4db.com/api/read/"
 DEFAULT_CACHE_DIR = Path(".ja4_cache")
 DB_CACHE_NAME = "ja4db_full.json.gz"
-DB_CACHE_DAYS = 1
+DB_CACHE_MAX_AGE = timedelta(hours=1)
 DEFAULT_OUTPUT_PREFIX = "ja4lookr_results"
 
 
@@ -216,11 +216,11 @@ class JA4Lookup:
                  "ja4x_fingerprint", "ja4t_fingerprint", "ja4ts_fingerprint",
                  "ja4tscan_fingerprint")
 
-    def __init__(self, cache_dir=DEFAULT_CACHE_DIR, cache_days=DB_CACHE_DAYS):
+    def __init__(self, cache_dir=DEFAULT_CACHE_DIR, max_age=DB_CACHE_MAX_AGE):
         self.cache_dir = Path(cache_dir) if cache_dir else None
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.cache_duration = timedelta(days=cache_days)
+        self.cache_duration = max_age
         self._db = None
         self._indexes = None
 
