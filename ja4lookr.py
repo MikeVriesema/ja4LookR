@@ -28,7 +28,9 @@ except ImportError:
     pass
 
 
-JA4DB_URL = "https://ja4db.com/api/read/"
+# FoxIO moved JA4DB behind ja4db.foxio.io; the endpoint (and whether it needs an
+# account/API key) can change. Override with the JA4DB_URL env var if needed.
+JA4DB_URL = os.getenv("JA4DB_URL", "https://ja4db.com/api/read/")
 DEFAULT_CACHE_DIR = Path(".ja4_cache")
 DB_CACHE_NAME = "ja4db_full.json.gz"
 DB_CACHE_MAX_AGE = timedelta(hours=1)
@@ -250,9 +252,30 @@ class JA4Lookup:
         if path and not force and self._cache_fresh():
             return
         print(f"[*] Pulling JA4DB from {JA4DB_URL} ...", file=sys.stderr)
-        resp = requests.get(JA4DB_URL, timeout=120)
-        resp.raise_for_status()
-        data = resp.json()
+        headers = {}
+        api_key = os.getenv("JA4DB_API_KEY")
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        try:
+            resp = requests.get(JA4DB_URL, timeout=120, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        except (requests.exceptions.RequestException, ValueError) as e:
+            # Fall back to a stale cache if we have one, so the tool stays usable.
+            if path and path.exists():
+                print(f"[!] JA4DB pull failed ({e}); using existing cached copy.",
+                      file=sys.stderr)
+                with gzip.open(path, "rt", encoding="utf-8") as f:
+                    self._db = json.load(f)
+                self._indexes = None
+                return
+            raise RuntimeError(
+                f"Could not download JA4DB from {JA4DB_URL}: {e}\n"
+                "FoxIO moved JA4DB to ja4db.foxio.io and the anonymous endpoint "
+                "may now require an account/API key. Set the JA4DB_URL env var to "
+                "the current endpoint (and JA4DB_API_KEY if it needs a token), "
+                "or place a JSON copy at .ja4_cache/ja4db_full.json.gz."
+            ) from e
         print(f"[*] {len(data)} records cached", file=sys.stderr)
         if path:
             with gzip.open(path, "wt", encoding="utf-8") as f:
@@ -935,4 +958,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as e:
+        print(f"[!] {e}", file=sys.stderr)
+        sys.exit(1)
