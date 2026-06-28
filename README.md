@@ -1,28 +1,42 @@
 # JA4LookR
 
-A JA4 fingerprint lookup tool with CLI and Web interfaces. Pulls the full
-[JA4DB](https://ja4db.com) once, caches it locally, and resolves matches
-in-process — including **near** and **partial** matches when an exact lookup
-misses. Optionally pivots to VirusTotal Intelligence for further enrichment.
+A JA4 fingerprint **threat-hunting** tool with CLI and Web interfaces. Pulls the
+full [JA4DB](https://ja4db.com), caches it locally (refreshed **hourly**), and
+resolves matches in-process — including **near**, **cipher-variant**, and
+**partial** matches when an exact lookup misses. Every parsed fingerprint is
+scored by a **risk engine** for the indicators threat hunters look for (legacy
+TLS, IP-only handshakes, missing ALPN). Optionally pivots to VirusTotal
+Intelligence for enrichment.
 
 ## Features
 
-- **Local DB cache** — full JA4DB pulled once (~73k records, gzipped),
-  refreshed daily. All lookups served from RAM.
+- **Risk engine** — every fingerprint is auto-scored `none → low → medium →
+  high` for **legacy TLS**, **direct-to-IP / no SNI** (the `i` char), and
+  **no ALPN** (`00`), with combo escalation for the classic C2 shape. Shown in
+  both CLI and web. See [Risk engine](#risk-engine).
+- **Database hunting** — sweep the whole JA4DB for risky structural patterns:
+  `--hunt legacy-tls,no-sni,no-alpn,risky,quic` (CLI) or the **Hunt DB** tab
+  (web). See [Hunting the database](#hunting-the-database).
+- **Reverse metadata search** — find fingerprints *by* application / User-Agent
+  / library / OS / device: `--search cobalt` (CLI) or the **Reverse Search**
+  tab (web). The inverse of a JA4 lookup. See [Reverse search](#reverse-search).
 - **Tiered matching** — exact → near (same cipher+extension hash, different
-  `ja4_a`) → partial (cipher hash OR extension hash matches) → none.
+  `ja4_a`) → **cipher_variant** (same `ja4_a`+`ja4_c`, different cipher hash —
+  catches cipher randomization & browser mimicry) → partial → none.
+- **Local DB cache** — full JA4DB (~73k records, gzipped), auto-refreshed when
+  older than **1 hour**. All lookups served from RAM.
 - **Wildcard search** — `*` matches any section, e.g.
   `t13d190900_*_97f8aa674fd9` (GoLang/Sliver), `*_8daaf6152771_*`, `t13*`.
-  Same syntax works for both the local DB and VT.
 - **Fingerprint parser** — decodes every field of `ja4_a` with descriptions.
-- **VirusTotal pivoting** — `--vt` runs `behavior_network:<fp>` and
-  automatically enriches the top hits with their **contacted IPs / domains /
-  URLs** (the "communicating files" pattern from the FoxIO + VT blog).
-- **YARA scaffolding** — `--yara` emits a `vt` module rule (exact match or
-  regex when wildcards are used) ready to drop into VT Hunter.
-- **JSON output by default** — full results written to
-  `ja4lookr_results.json` (`-o PATH` to rename, `-o -` to skip).
+- **VirusTotal pivoting** — `--vt` runs `behavior_network:<fp>` and enriches the
+  top hits with their **contacted IPs / domains / URLs** (defanged). Verify your
+  key + privileges with `--vt-check`.
+- **YARA scaffolding** — `--yara` emits a `vt` module rule (exact or regex).
+- **JSON output by default** — full results written to a timestamped
+  `ja4lookr_results_*.json` (`-o PATH` to rename, `-o -` to skip).
 - **Batch + CSV** for pipelines, **Web UI + REST API** with rate limiting.
+- **Tested** — `pytest` suite covering the parser, risk engine, all match
+  tiers, hunting, and reverse search.
 
 ## What is JA4?
 
@@ -51,6 +65,76 @@ Decoding `ja4_a` (`t13d1516h2`):
 | `h2`     | `h2`  | ALPN first/last char (`h2`=HTTP/2, `h1`=HTTP/1.1, `h3`=HTTP/3, `00`=none) |
 
 Reference: [FoxIO-LLC/ja4](https://github.com/FoxIO-LLC/ja4)
+
+## Risk engine
+
+Every parsed fingerprint is scored for the indicators threat hunters look for.
+Flags stack into an overall level (`none → low → medium → high`):
+
+| Flag | Trigger | Severity | Why it matters |
+|------|---------|----------|----------------|
+| `legacy_tls` | TLS version `11`/`10`/`s3`/`s2`/`s1` | high | Pre-TLS-1.2 is rare for current legitimate clients; common in old malware, scanners, and embedded/IoT stacks. |
+| `no_sni_ip` | SNI flag is `i` | medium | Connected to an IP with no server name. Browsers almost always send SNI; IP-only TLS is typical of C2 and custom tooling. |
+| `no_alpn` | ALPN is `00` | medium | No application protocol negotiated. Alongside a browser-like handshake, suggests a minimal/custom TLS stack. |
+| `quic` | Transport is `q` | info | TLS 1.3 in QUIC. Informational. |
+
+**Combo escalation:** `no_sni_ip` **and** `no_alpn` together is the classic C2
+shape and escalates the overall level to **high**.
+
+Worked examples (from the FoxIO threat-hunting slides):
+
+| Tool | JA4 | Risk | Why |
+|------|-----|------|-----|
+| Chrome 137 | `t13d1516h2_8daaf6152771_d8a2da3f94cd` | **none** | TLS 1.3, SNI present, ALPN `h2` |
+| Cobalt Strike | `t12d210600_b973bfd88a0e_1da50ec048a3` | **medium** | TLS 1.2 + SNI, but no ALPN |
+| Sliver | `t13i190800_9dc949149365_97f8aa674fd9` | **high** | IP-only **and** no ALPN |
+| Metasploit | `t12i190700_d83cc789557e_16bbda4055b2` | **high** | IP-only **and** no ALPN |
+
+In the web UI, the same explanation lives in the **About** panel on the home
+page, and the risk panel is rendered with colour-coded severity on every result.
+
+## Threat-hunting field guide
+
+Inspired by the [hunt.io JA4 glossary](https://hunt.io/glossary/ja4-fingerprinting)
+and the FoxIO/VirusTotal hunting workflow. Each technique has a CLI command and a
+web equivalent.
+
+- **Surface the risky shapes.** Sweep the DB for legacy TLS, IP-only, and
+  no-ALPN clients:
+  `python3 ja4lookr.py --hunt risky` · web: **Hunt DB** tab → tick *Risky*.
+- **Partial-segment pivoting.** When an actor randomizes cipher suites, `ja4_a`
+  and `ja4_c` stay stable while `ja4_b` changes. A lookup that misses exact/near
+  but shares `ja4_a`+`ja4_c` with a known entry returns the **`cipher_variant`**
+  tier — and if those neighbours are browsers, a **browser-mimicry** warning.
+  Pivot wider with a wildcard on the cipher hash: `python3 ja4lookr.py "t13d1516h2_*_d8a2da3f94cd"`.
+- **ALPN-00 non-browser heuristic.** `--hunt no-alpn` finds clients advertising
+  no application protocol — with a browser-like handshake this points at a
+  minimal/custom stack (malware or tooling).
+- **Direct-to-IP C2.** `--hunt no-sni,no-alpn` isolates the IP-only + no-ALPN
+  shape used by Sliver and Metasploit.
+- **Reverse-pivot from intel.** Got a tool name from a report? Find its known
+  fingerprints: `python3 ja4lookr.py --search "cobalt strike"`.
+- **Pivot to infrastructure.** Feed a fingerprint (or a `t13d190900_*_97f8aa674fd9`
+  wildcard) to VirusTotal: `python3 ja4lookr.py --vt "t13i190800_*_97f8aa674fd9"`
+  to surface communicating files and their contacted IPs/domains/URLs.
+
+## Comparison to sans-blue-team/ja4db-search
+
+[`ja4db-search`](https://github.com/sans-blue-team/ja4db-search) is a handy
+minimal lookup. JA4LookR is a superset:
+
+| Capability | ja4db-search | JA4LookR |
+|------------|:---:|:---:|
+| Exact `ja4_fingerprint` lookup | ✓ | ✓ |
+| Near / partial / **cipher_variant** matching | — | ✓ |
+| Wildcard hunting patterns | — | ✓ |
+| Risk scoring (legacy TLS / IP-only / no-ALPN) | — | ✓ |
+| Structural DB hunting (`--hunt`) | — | ✓ |
+| Reverse metadata search (by app/UA/library) | — | ✓ |
+| Auto-cached DB, hourly refresh | manual file | ✓ |
+| VirusTotal pivot + enrichment | — | ✓ |
+| YARA scaffolding | — | ✓ |
+| Web UI + REST API | — | ✓ |
 
 ## Installation
 
@@ -82,6 +166,16 @@ VIRUSTOTAL_API_KEY=your_vt_intelligence_key_here
 # VT_API_KEY is also accepted as an alias
 ```
 
+The key is read from the environment (or a `.env` file in the project root) by
+both the CLI and the web app. Verify it before hunting:
+
+```bash
+python3 ja4lookr.py --vt-check
+# VirusTotal key: valid — Key valid; VT Intelligence (behavior_network) available
+# VirusTotal key: valid_no_intelligence — Key valid but lacks VT Intelligence; ...
+# VirusTotal key: no_key — No VT API key set (VIRUSTOTAL_API_KEY or VT_API_KEY)
+```
+
 VT enrichment costs ~3 API calls per enriched file (default 5 files = ~16
 calls per lookup). Tune with `--vt-max-enrich` / `--vt-max-files`, or skip
 enrichment entirely with `--no-vt-enrich`.
@@ -109,10 +203,14 @@ Then open your browser to `http://localhost:5000`
 
 **Web Features (full parity with the CLI):**
 - Single fingerprint or **wildcard pattern** lookup (e.g. `t13d190900_*_97f8aa674fd9`)
-- Match-type rendering: Exact / Near / Wildcard / Partial / Not Found
-- Decoded JA4 components (transport, TLS version, SNI flag, counts, ALPN)
+- Match-type rendering: Exact / Near / **Cipher variant** / Wildcard / Partial / Not Found
+- Decoded JA4 components plus a colour-coded **risk panel** (legacy TLS, IP-only,
+  no-ALPN), with the **About** panel explaining how the risk engine works
+- **Hunt DB** tab — checkbox-driven structural hunting (legacy TLS / no SNI /
+  no ALPN / QUIC / risky)
+- **Reverse Search** tab — find fingerprints by application / User-Agent / metadata
+- Browser-mimicry warning on cipher-variant hits
 - VirusTotal pivot with per-file **contacted IPs / domains / URLs (defanged)**
-  and aggregated network pivots across the result set
 - Inline **YARA rule** scaffold with copy-to-clipboard
 - One-click **JSON export** of the full result payload
 - Batch lookup (up to 100 fingerprints, wildcards accepted)
@@ -160,6 +258,42 @@ python3 ja4lookr.py "*_8daaf6152771_*"
 # Same JA4_A + JA4_C, any cipher (used in VT searches too)
 python3 ja4lookr.py --vt "t10d070600_*_1a3805c3aa63"
 ```
+
+#### Hunting the database
+
+Sweep the entire JA4DB for risky structural patterns — no fingerprint needed.
+Criteria are comma-separated and **ANDed** together:
+
+```bash
+# Every legacy-TLS client in the DB
+python3 ja4lookr.py --hunt legacy-tls
+
+# The IP-only + no-ALPN C2 shape (Sliver / Metasploit)
+python3 ja4lookr.py --hunt no-sni,no-alpn
+
+# Anything the risk engine rates medium or high
+python3 ja4lookr.py --hunt risky
+
+# Compose with existing filters
+python3 ja4lookr.py --hunt no-alpn -a "Cobalt Strike" --verified-only
+```
+
+Criteria: `legacy-tls`, `no-sni`, `no-alpn`, `risky`, `quic`. Web equivalent:
+the **Hunt DB** tab.
+
+#### Reverse search
+
+Find fingerprints *by* their metadata — the inverse of a JA4 lookup:
+
+```bash
+# Search all metadata fields (application, UA, library, device, os, notes)
+python3 ja4lookr.py --search "cobalt strike"
+
+# Restrict to one field
+python3 ja4lookr.py --search curl --field user_agent_string
+```
+
+Web equivalent: the **Reverse Search** tab.
 
 #### VirusTotal Pivot
 
@@ -280,9 +414,14 @@ Optional query parameters:
   `?ja4_fingerprint=` filter only honors exact matches; partial filters
   (`__contains`, `__endswith`) are ignored, so per-request lookups can never
   produce near/partial matches. Local indexing solves both problems.
-- **In-memory indexes** (`exact`, `cipher`, `extension`) built once per
-  process. 73k-record lookups are sub-millisecond.
+- **In-memory indexes** built in a **single pass** over the DB:
+  `exact`, `cipher`, `extension`, the `(ja4_a, ja4_c)` index (for the
+  `cipher_variant` tier), and a `struct` cache of pre-parsed components + risk
+  (for `--hunt`). 73k-record lookups and hunts are sub-millisecond after the
+  one-time build; nothing is re-parsed per query.
 - **gzip on disk** keeps the cache around 5–10 MB.
+- **Wildcard search is a full scan** of the DB by design (regex over every
+  fingerprint field) — still fast on 73k records, but not indexed.
 
 ## Configuration
 
@@ -290,7 +429,7 @@ Optional query parameters:
 
 ```bash
 # JA4DB cache (no key required)
-# Cache lives at .ja4_cache/ja4db_full.json.gz, refreshed once per day.
+# Cache lives at .ja4_cache/ja4db_full.json.gz, auto-refreshed when older than 1 hour.
 
 # VirusTotal Intelligence (optional, only used with --vt)
 VIRUSTOTAL_API_KEY=your_key_here   # or VT_API_KEY
@@ -412,8 +551,9 @@ done < new_fingerprints.txt
 usage: ja4lookr.py [-h] [-f FILE] [-a APPLICATION] [--verified-only]
                    [--no-cache] [--refresh] [--parse] [--csv]
                    [--vt] [--no-vt-enrich] [--vt-max-enrich N]
-                   [--vt-max-files N] [--yara] [--json] [-o OUTPUT]
-                   [fingerprint]
+                   [--vt-max-files N] [--yara] [--hunt CRITERIA]
+                   [--search TERM] [--field FIELD] [--vt-check]
+                   [--json] [-o OUTPUT] [fingerprint]
 
 positional arguments:
   fingerprint           JA4/JA4S/JA4H fingerprint or wildcard pattern
@@ -433,20 +573,38 @@ options:
   --vt-max-enrich N     Max files to enrich (default: 5)
   --vt-max-files N      Max files to return from VT search (default: 10)
   --yara                Print VT YARA rule scaffold (regex when wildcarded)
+  --hunt CRITERIA       Hunt the JA4DB by structural criteria, no fingerprint
+                        needed. Comma-separated: legacy-tls,no-sni,no-alpn,risky,quic
+  --search TERM         Reverse lookup by metadata substring
+  --field FIELD         Restrict --search to one field (e.g. application)
+  --vt-check            Verify the VirusTotal API key/privileges and exit
   --json                Print full result JSON to stdout
-  -o, --output PATH     JSON output file (default: ja4lookr_results.json,
+  -o, --output PATH     JSON output file (default: ja4lookr_results_<ts>.json,
                         use - to skip)
 ```
 
 ### Match Types
 
-| Type       | Meaning                                                                   |
-|------------|---------------------------------------------------------------------------|
-| `exact`    | Fingerprint matches a stored `ja4*` value verbatim.                       |
-| `near`     | Cipher hash AND extension hash match, but `ja4_a` differs (e.g. different ALPN, SNI flag, or count). Strong signal it's the same client family. |
-| `wildcard` | Pattern (containing `*`) matched one or more records.                     |
-| `partial`  | Only the cipher hash OR only the extension hash matches known records. Weaker — useful for narrowing the client library / ecosystem. |
-| `none`     | Nothing matches. Consider `--vt` or threat-intel pivots.                  |
+| Type             | Meaning                                                             |
+|------------------|---------------------------------------------------------------------|
+| `exact`          | Fingerprint matches a stored `ja4*` value verbatim.                 |
+| `near`           | Cipher hash AND extension hash match, but `ja4_a` differs (e.g. different ALPN, SNI flag, or count). Strong signal it's the same client family. |
+| `cipher_variant` | Same `ja4_a` AND `ja4_c`, different cipher hash (`ja4_b`). Indicates cipher-suite randomization; if neighbours are browsers, flags possible **mimicry/impersonation**. |
+| `wildcard`       | Pattern (containing `*`) matched one or more records.               |
+| `partial`        | Only the cipher hash OR only the extension hash matches known records. Weaker — useful for narrowing the client library / ecosystem. |
+| `none`           | Nothing matches. Consider `--hunt`, `--vt`, or threat-intel pivots. |
+
+## Testing
+
+```bash
+pip3 install -r requirements.txt   # includes pytest
+python3 -m pytest -v
+```
+
+The suite runs fully offline — it injects a synthetic in-memory DB, so no
+network or live JA4DB is required. It covers the parser, the risk engine (all
+four reference signatures), every match tier, hunting, reverse search,
+wildcards, defang, and YARA generation.
 
 ## Troubleshooting
 
@@ -483,8 +641,10 @@ python3 ja4lookr.py --no-cache <fingerprint>
 ### VirusTotal returns 403 / "not available on this key"
 
 `behavior_network:` search needs a paid VT Intelligence or Enterprise key.
-The free public API will return 403 / empty results. Either upgrade the
-key or remove `--vt`.
+The free public API will return 403 / empty results. Run `python3 ja4lookr.py
+--vt-check` to confirm whether your key has Intelligence privileges — a
+`valid_no_intelligence` result means the key works but can't run
+`behavior_network:` queries. Either upgrade the key or remove `--vt`.
 
 ## Contributing
 
