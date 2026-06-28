@@ -371,6 +371,30 @@ class JA4Lookup:
             out.append(r)
         return out[:limit] if limit else out
 
+    META_FIELDS = ("application", "library", "device", "os",
+                   "user_agent_string", "notes")
+
+    def search_metadata(self, term, field=None, limit=None):
+        """Reverse lookup: find records by metadata substring (case-insensitive).
+
+        Searches all META_FIELDS, or one ``field`` if given. Returns the full
+        records (including their fingerprints) — the inverse of a JA4 lookup.
+        """
+        self._load()
+        self._build_indexes()
+        term_l = (term or "").lower().strip()
+        if not term_l:
+            return []
+        fields = (field,) if field else self.META_FIELDS
+        out = []
+        for r in self._db:
+            for f in fields:
+                v = r.get(f)
+                if v and term_l in str(v).lower():
+                    out.append(r)
+                    break
+        return out[:limit] if limit else out
+
     def batch_lookup(self, fingerprints, show_progress=True):
         results = {}
         self._load()

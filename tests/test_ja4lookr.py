@@ -145,3 +145,18 @@ def test_hunt_composes_criteria():
     # no-sni AND no-alpn -> only the IP-only C2 (Sliver), not Cobalt (has SNI).
     apps = {r["application"] for r in make_lookup().hunt({"no-sni", "no-alpn"})}
     assert apps == {"Sliver"}
+
+
+def test_search_metadata_by_app():
+    hits = make_lookup().search_metadata("sliver")
+    assert any(r["ja4_fingerprint"] == SLIVER for r in hits)
+
+
+def test_search_metadata_field_scoped():
+    hits = make_lookup().search_metadata("Mozilla", field="user_agent_string")
+    assert len(hits) == 1
+    assert hits[0]["application"] == "Chrome"
+
+
+def test_search_metadata_empty_term():
+    assert make_lookup().search_metadata("   ") == []
