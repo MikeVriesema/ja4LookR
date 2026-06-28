@@ -160,3 +160,19 @@ def test_search_metadata_field_scoped():
 
 def test_search_metadata_empty_term():
     assert make_lookup().search_metadata("   ") == []
+
+
+from ja4lookr import VirusTotalLookup  # noqa: E402
+
+
+def test_vt_verify_key_no_key(monkeypatch):
+    monkeypatch.delenv("VIRUSTOTAL_API_KEY", raising=False)
+    monkeypatch.delenv("VT_API_KEY", raising=False)
+    vt = VirusTotalLookup(api_key=None)
+    result = vt.verify_key()
+    assert result["status"] == "no_key"
+
+
+def test_vt_is_configured_reads_env(monkeypatch):
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "deadbeef")
+    assert VirusTotalLookup().is_configured()

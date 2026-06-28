@@ -434,6 +434,30 @@ class VirusTotalLookup:
     def is_configured(self):
         return bool(self.api_key)
 
+    def verify_key(self):
+        """Check the configured key: no_key / invalid / valid / valid_no_intelligence."""
+        if not self.api_key:
+            return {"status": "no_key",
+                    "message": "No VT API key set (VIRUSTOTAL_API_KEY or VT_API_KEY)"}
+        try:
+            self._get("/metadata", timeout=15)
+        except PermissionError as e:
+            if "Invalid" in str(e):
+                return {"status": "invalid", "message": str(e)}
+        except requests.exceptions.RequestException as e:
+            return {"status": "error", "message": str(e)}
+        try:
+            self._get("/intelligence/search",
+                      params={"query": "entity:file", "limit": 1}, timeout=15)
+            return {"status": "valid",
+                    "message": "Key valid; VT Intelligence (behavior_network) available"}
+        except PermissionError:
+            return {"status": "valid_no_intelligence",
+                    "message": "Key valid but lacks VT Intelligence; behavior_network: "
+                               "searches need a Premium/Enterprise key"}
+        except requests.exceptions.RequestException as e:
+            return {"status": "error", "message": str(e)}
+
     def _get(self, path, params=None, timeout=20):
         r = self.session.get(f"{self.base_url}{path}", params=params, timeout=timeout)
         if r.status_code == 401:
