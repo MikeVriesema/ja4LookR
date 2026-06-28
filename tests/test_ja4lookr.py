@@ -121,3 +121,27 @@ def test_lookup_none():
 def test_is_browser_record():
     assert is_browser_record({"application": "Chrome"})
     assert not is_browser_record({"application": "Sliver"})
+
+
+def test_hunt_no_sni_finds_ip_only():
+    hits = make_lookup().hunt({"no-sni"})
+    apps = {r["application"] for r in hits}
+    assert "Sliver" in apps
+    assert "Chrome" not in apps
+
+
+def test_hunt_no_alpn_finds_c2():
+    apps = {r["application"] for r in make_lookup().hunt({"no-alpn"})}
+    assert {"Sliver", "Cobalt Strike"} <= apps
+
+
+def test_hunt_risky_excludes_clean_chrome():
+    apps = {r["application"] for r in make_lookup().hunt({"risky"})}
+    assert "Chrome" not in apps
+    assert "Sliver" in apps
+
+
+def test_hunt_composes_criteria():
+    # no-sni AND no-alpn -> only the IP-only C2 (Sliver), not Cobalt (has SNI).
+    apps = {r["application"] for r in make_lookup().hunt({"no-sni", "no-alpn"})}
+    assert apps == {"Sliver"}

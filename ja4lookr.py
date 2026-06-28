@@ -337,6 +337,40 @@ class JA4Lookup:
             return {"cipher_matches": cipher_hits, "extension_matches": ext_hits}, "partial"
         return [], "none"
 
+    HUNT_CRITERIA = ("legacy-tls", "no-sni", "no-alpn", "risky", "quic")
+
+    def hunt(self, criteria, app_filter=None, verified_only=False, limit=None):
+        """Return DB records whose JA4 matches structural hunting criteria.
+
+        criteria: iterable of tokens from HUNT_CRITERIA. Multiple tokens are
+        ANDed together. ``risky`` = computed risk level medium or high.
+        """
+        self._load()
+        self._build_indexes()
+        crit = {c.strip().lower() for c in criteria if c and c.strip()}
+        out = []
+        for r, comp, risk in self._indexes["struct"]:
+            transport = comp["transport"]["code"]
+            tls = comp["tls_version"]["code"]
+            sni = comp["sni"]["code"]
+            alpn = comp["alpn"]["code"]
+            if "legacy-tls" in crit and tls not in LEGACY_TLS:
+                continue
+            if "no-sni" in crit and sni != "i":
+                continue
+            if "no-alpn" in crit and alpn != "00":
+                continue
+            if "quic" in crit and transport != "q":
+                continue
+            if "risky" in crit and risk["level"] not in ("medium", "high"):
+                continue
+            if app_filter and (r.get("application") or "").lower() != app_filter.lower():
+                continue
+            if verified_only and not r.get("verified"):
+                continue
+            out.append(r)
+        return out[:limit] if limit else out
+
     def batch_lookup(self, fingerprints, show_progress=True):
         results = {}
         self._load()
