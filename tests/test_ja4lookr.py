@@ -89,3 +89,35 @@ def test_indexes_include_ac_and_struct():
     assert ("t13d1516h2", "d8a2da3f94cd") in lk._indexes["ac"]
     # struct is a list of (record, components, risk) triples for hunting.
     assert any(comp["sni"]["code"] == "i" for _, comp, _ in lk._indexes["struct"])
+
+
+from ja4lookr import is_browser_record  # noqa: E402
+
+
+def test_lookup_exact():
+    matches, mt = make_lookup().lookup(CHROME)
+    assert mt == "exact"
+    assert matches[0]["application"] == "Chrome"
+
+
+def test_lookup_near_same_b_c_diff_a():
+    # Query shares cobalt's b+c but a different ja4_a -> near.
+    matches, mt = make_lookup().lookup("t13d210600_b973bfd88a0e_1da50ec048a3")
+    assert mt == "near"
+
+
+def test_lookup_cipher_variant_same_a_c_diff_b():
+    # Same ja4_a + ja4_c as Chrome, novel cipher hash -> cipher_variant.
+    matches, mt = make_lookup().lookup("t13d1516h2_aaaaaaaaaaaa_d8a2da3f94cd")
+    assert mt == "cipher_variant"
+    assert any(is_browser_record(r) for r in matches)
+
+
+def test_lookup_none():
+    matches, mt = make_lookup().lookup("t13d9999z9_000000000000_111111111111")
+    assert mt == "none"
+
+
+def test_is_browser_record():
+    assert is_browser_record({"application": "Chrome"})
+    assert not is_browser_record({"application": "Sliver"})

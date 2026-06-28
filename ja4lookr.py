@@ -204,6 +204,17 @@ def defang(value):
     return out.replace(".", "[.]")
 
 
+BROWSER_HINTS = ("chrome", "chromium", "firefox", "safari", "edge",
+                 "brave", "opera")
+
+
+def is_browser_record(r):
+    """True if a JA4DB record looks like a mainstream web browser."""
+    blob = " ".join(str(r.get(k) or "") for k in
+                    ("application", "library", "user_agent_string")).lower()
+    return any(h in blob for h in BROWSER_HINTS)
+
+
 def wildcard_to_regex(pattern):
     """Convert a JA4 wildcard pattern to a compiled regex. `*` matches any chars."""
     escaped = re.escape(pattern).replace(r"\*", ".*")
@@ -310,13 +321,18 @@ class JA4Lookup:
 
         if fp.count("_") != 2:
             return [], "none"
-        _, b, c = fp.split("_")
+        a, b, c = fp.split("_")
         cipher_hits = self._indexes["cipher"].get(b, [])
         ext_hits = self._indexes["extension"].get(c, [])
         near = [r for r in cipher_hits
                 if (r.get("ja4_fingerprint") or "").lower().endswith(f"_{b}_{c}")]
         if near:
             return near, "near"
+        ac_hits = self._indexes["ac"].get((a, c), [])
+        variant = [r for r in ac_hits
+                   if (r.get("ja4_fingerprint") or "").lower() != fp]
+        if variant:
+            return variant, "cipher_variant"
         if cipher_hits or ext_hits:
             return {"cipher_matches": cipher_hits, "extension_matches": ext_hits}, "partial"
         return [], "none"
