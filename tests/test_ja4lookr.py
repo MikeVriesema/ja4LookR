@@ -39,3 +39,38 @@ def make_lookup(records=RECORDS):
 def test_smoke_fixture_builds():
     lk = make_lookup()
     assert lk._db is not None
+
+
+def test_risk_chrome_is_clean():
+    risk = parse_ja4(CHROME)["risk"]
+    assert risk["level"] == "none"
+    assert risk["flags"] == []
+
+
+def test_risk_sliver_is_high_ip_and_no_alpn():
+    risk = parse_ja4(SLIVER)["risk"]
+    assert risk["level"] == "high"
+    codes = {f["code"] for f in risk["flags"]}
+    assert "no_sni_ip" in codes
+    assert "no_alpn" in codes
+
+
+def test_risk_metasploit_is_high():
+    assert parse_ja4(METASPLOIT)["risk"]["level"] == "high"
+
+
+def test_risk_cobalt_medium_only_no_alpn():
+    risk = parse_ja4(COBALT)["risk"]
+    assert risk["level"] == "medium"
+    assert {f["code"] for f in risk["flags"]} == {"no_alpn"}
+
+
+def test_risk_legacy_tls_is_high():
+    risk = parse_ja4("t10d1516h2_8daaf6152771_d8a2da3f94cd")["risk"]
+    assert risk["level"] == "high"
+    assert any(f["code"] == "legacy_tls" for f in risk["flags"])
+
+
+def test_assess_risk_direct_call():
+    r = assess_risk("t", "13", "i", "00", 19, 8)
+    assert r["level"] == "high"

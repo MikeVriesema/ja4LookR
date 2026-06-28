@@ -68,6 +68,66 @@ ALPN_KNOWN = {
     "00": "no ALPN advertised",
 }
 
+LEGACY_TLS = {"11", "10", "s3", "s2", "s1"}
+SEVERITY_POINTS = {"info": 0, "low": 1, "medium": 2, "high": 4}
+
+
+def assess_risk(transport, tls_ver, sni, alpn, cipher_n=None, ext_n=None):
+    """Score threat-hunting risk for a parsed JA4_a.
+
+    Mirrors the FoxIO threat-hunting guidance: legacy TLS, IP-only (no SNI),
+    and absent ALPN are the indicators to look for. The IP-only + no-ALPN
+    combination is the classic C2 shape (Sliver, Metasploit) and escalates
+    to ``high``.
+    """
+    flags = []
+    if tls_ver in LEGACY_TLS:
+        flags.append({
+            "code": "legacy_tls", "severity": "high",
+            "title": f"Legacy TLS ({TLS_VERSIONS.get(tls_ver, tls_ver)})",
+            "detail": "Pre-TLS-1.2 handshake. Rare for current legitimate clients; "
+                      "common in old malware, scanners, and embedded/IoT stacks.",
+        })
+    if sni == "i":
+        flags.append({
+            "code": "no_sni_ip", "severity": "medium",
+            "title": "Direct-to-IP / no SNI",
+            "detail": "Connected to an IP with no server name. Browsers almost always "
+                      "send SNI; IP-only TLS is typical of C2 (Sliver, Metasploit) and "
+                      "custom tooling.",
+        })
+    if alpn == "00":
+        flags.append({
+            "code": "no_alpn", "severity": "medium",
+            "title": "No ALPN advertised",
+            "detail": "No application protocol negotiated. Alongside a browser-like "
+                      "handshake this suggests a minimal/custom TLS stack (malware or "
+                      "custom tooling) rather than a real browser.",
+        })
+    if transport == "q":
+        flags.append({
+            "code": "quic", "severity": "info",
+            "title": "QUIC transport",
+            "detail": "TLS 1.3 carried in QUIC. Informational.",
+        })
+
+    score = sum(SEVERITY_POINTS[f["severity"]] for f in flags)
+    codes = {f["code"] for f in flags}
+    combo = {"no_sni_ip", "no_alpn"} <= codes
+    if combo:
+        score += 3
+    has_high = any(f["severity"] == "high" for f in flags)
+    has_medium = any(f["severity"] == "medium" for f in flags)
+    if has_high or combo or score >= 6:
+        level = "high"
+    elif has_medium:
+        level = "medium"
+    elif score >= 1:
+        level = "low"
+    else:
+        level = "none"
+    return {"level": level, "score": score, "flags": flags}
+
 
 def parse_ja4(fingerprint):
     """Decode a JA4 client fingerprint into labeled, human-readable components.
@@ -120,6 +180,7 @@ def parse_ja4(fingerprint):
             f"{cipher_n} ciphers, {ext_n} extensions | "
             f"ALPN={ALPN_KNOWN.get(alpn, alpn)}"
         ),
+        "risk": assess_risk(transport, tls_ver, sni, alpn, cipher_n, ext_n),
         "is_tls13": tls_ver == "13",
         "is_tls12": tls_ver == "12",
         "is_quic": transport == "q",
