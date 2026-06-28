@@ -10,3 +10,6 @@ waitress>=2.1.2
 
 # Security
 werkzeug>=3.0.0
+
+# Testing
+pytest>=8.0.0
