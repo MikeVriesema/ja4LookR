@@ -652,6 +652,19 @@ def format_lookup(fp, matches, mt, app_filter=None, verified_only=False):
             lines.append("---")
             lines.append(f"   ja4           {r.get('ja4_fingerprint')}")
             lines.extend(_record_lines(r))
+    elif mt == "cipher_variant":
+        records = _filter(matches)
+        mimic = any(is_browser_record(r) for r in records)
+        note = (" — a+c match a known BROWSER; possible mimicry/impersonation"
+                if mimic else "")
+        lines.append(f"[~] Cipher variant: same ja4_a + ja4_c, different cipher "
+                     f"hash ({len(records)} record(s)){note}")
+        lines.append("   Pivot: actor may be randomizing cipher order; hunt on "
+                     "*_<ext_hash> with this ja4_a.")
+        for r in records[:25]:
+            lines.append("---")
+            lines.append(f"   ja4           {r.get('ja4_fingerprint')}")
+            lines.extend(_record_lines(r))
     elif mt == "wildcard":
         records = _filter(matches)
         lines.append(f"[*] Wildcard match in JA4DB ({len(records)} record(s))")
@@ -675,6 +688,46 @@ def format_lookup(fp, matches, mt, app_filter=None, verified_only=False):
         lines.append("   Could be: custom client, new malware, recent software, IoT device, or proprietary tool.")
         lines.append("   Pivot on User-Agent / src IP / dest, check threat intel, or run --vt with a VT Intelligence key.")
     return "\n".join(lines)
+
+
+RISK_GLYPH = {"high": "[!!]", "medium": "[!]", "low": "[.]",
+              "none": "[ok]", "info": "[i]"}
+
+
+def format_risk(risk):
+    if not risk or not risk.get("flags"):
+        return "   Risk: none (no legacy TLS, SNI present, ALPN advertised)"
+    lines = [f"   Risk: {risk['level'].upper()} (score {risk['score']})"]
+    for f in risk["flags"]:
+        lines.append(f"     {RISK_GLYPH.get(f['severity'], '[?]')} "
+                     f"{f['title']} — {f['detail']}")
+    return "\n".join(lines)
+
+
+def format_records(records, cap=25):
+    lines = []
+    for r in records[:cap]:
+        lines.append("---")
+        if r.get("ja4_fingerprint"):
+            lines.append(f"   ja4           {r.get('ja4_fingerprint')}")
+        lines.extend(_record_lines(r))
+    if len(records) > cap:
+        lines.append(f"   ... {len(records) - cap} more (full list in JSON output)")
+    return "\n".join(lines)
+
+
+def format_hunt(criteria, records):
+    head = (f"\nHunt: {', '.join(sorted(criteria))} — "
+            f"{len(records)} matching JA4DB record(s)")
+    return head + ("\n" + format_records(records) if records else
+                   "\n   No DB records match these criteria.")
+
+
+def format_search(term, field, records):
+    scope = f"field={field}" if field else "all metadata fields"
+    head = f"\nReverse search: '{term}' ({scope}) — {len(records)} record(s)"
+    return head + ("\n" + format_records(records) if records else
+                   "\n   No DB records match.")
 
 
 def format_vt(vt_result):
@@ -749,6 +802,17 @@ def main():
                    help="Max files to return from VT search (default: 10)")
     p.add_argument("--yara", action="store_true",
                    help="Print a VT YARA rule scaffold for the fingerprint")
+    p.add_argument("--hunt",
+                   help="Hunt the JA4DB by structural criteria (no fingerprint "
+                        "needed). Comma-separated: legacy-tls,no-sni,no-alpn,risky,quic")
+    p.add_argument("--search",
+                   help="Reverse lookup: find fingerprints by metadata substring "
+                        "(application/UA/library/device/os/notes)")
+    p.add_argument("--field",
+                   help="Restrict --search to one metadata field "
+                        "(e.g. application, user_agent_string)")
+    p.add_argument("--vt-check", action="store_true",
+                   help="Verify the VirusTotal API key/privileges and exit")
     p.add_argument("--json", dest="as_json", action="store_true",
                    help="Print full result JSON to stdout")
     p.add_argument("-o", "--output", default=None,
@@ -761,6 +825,38 @@ def main():
     lookup = JA4Lookup(cache_dir=cache_dir)
     if args.refresh and cache_dir:
         lookup.refresh(force=True)
+
+    if args.vt_check:
+        status = VirusTotalLookup().verify_key()
+        print(f"VirusTotal key: {status['status']} — {status['message']}")
+        return
+
+    def _write_json(out):
+        if args.as_json:
+            print(json.dumps(out, indent=2, default=str))
+        if args.output != "-":
+            out_path = Path(args.output) if args.output else Path(default_output_path())
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(out, f, indent=2, default=str)
+            print(f"\n[+] JSON results written to {out_path}", file=sys.stderr)
+
+    if args.hunt:
+        criteria = [c for c in args.hunt.split(",") if c.strip()]
+        records = lookup.hunt(criteria, app_filter=args.application,
+                              verified_only=args.verified_only)
+        print(format_hunt(set(criteria), records))
+        _write_json({"timestamp": datetime.now().isoformat(), "mode": "hunt",
+                     "criteria": criteria, "count": len(records),
+                     "records": records})
+        return
+
+    if args.search:
+        records = lookup.search_metadata(args.search, field=args.field)
+        print(format_search(args.search, args.field, records))
+        _write_json({"timestamp": datetime.now().isoformat(), "mode": "search",
+                     "term": args.search, "field": args.field,
+                     "count": len(records), "records": records})
+        return
 
     vt = VirusTotalLookup() if args.vt else None
     output = {"timestamp": datetime.now().isoformat(), "results": []}
@@ -778,6 +874,8 @@ def main():
         print(format_lookup(fp, matches, mt,
                             app_filter=args.application,
                             verified_only=args.verified_only))
+        if record.get("parsed") and record["parsed"].get("risk"):
+            print(format_risk(record["parsed"]["risk"]))
         if vt:
             print("[*] Querying VirusTotal Intelligence ...", file=sys.stderr)
             vt_res = vt.lookup_ja4(fp,
