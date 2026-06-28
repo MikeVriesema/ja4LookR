@@ -101,21 +101,34 @@
 {% block content %}
 <div class="info-box">
     <h3>About JA4 Fingerprints</h3>
-    <p>JA4 identifies TLS clients by their handshake characteristics — useful for application identification,
-       anomaly detection, and threat hunting. JA4LookR resolves fingerprints against the local JA4DB cache
-       (exact, near, wildcard, and partial matches) and optionally pivots to VirusTotal Intelligence with
-       per-file network indicators.</p>
+    <p>JA4 identifies TLS clients by their handshake characteristics — useful for application
+       identification, anomaly detection, and threat hunting. JA4LookR resolves fingerprints
+       against a locally cached JA4DB (refreshed hourly) with exact, near, <strong>cipher-variant</strong>,
+       wildcard, and partial matching, and optionally pivots to VirusTotal Intelligence.</p>
     <ul>
-        <li><strong>JA4</strong>: TLS client fingerprinting</li>
-        <li><strong>JA4H</strong>: HTTP client fingerprinting</li>
-        <li><strong>JA4S</strong>: TLS server fingerprinting</li>
+        <li><strong>JA4</strong>: TLS client fingerprinting · <strong>JA4H</strong>: HTTP · <strong>JA4S</strong>: TLS server</li>
         <li><strong>Wildcards</strong>: use <code>*</code> for any section, e.g. <code>t13d190900_*_97f8aa674fd9</code></li>
     </ul>
+    <h3 style="margin-top:18px;">How the risk engine works</h3>
+    <p>Every parsed fingerprint is scored for the indicators threat hunters look for. Flags stack into
+       an overall level (<strong>none → low → medium → high</strong>):</p>
+    <ul>
+        <li><strong>Legacy TLS</strong> (<code>11</code>/<code>10</code>/<code>s3</code>…) — pre-TLS-1.2 is rare for legitimate clients today → <em>high</em>.</li>
+        <li><strong>Direct-to-IP / no SNI</strong> (the <code>i</code> char, e.g. <code>t13<strong>i</strong>…</code>) — browsers almost always send SNI; IP-only TLS is typical of C2 → <em>medium</em>.</li>
+        <li><strong>No ALPN</strong> (<code>00</code>) — no negotiated protocol; with a browser-like handshake this hints at a minimal/custom stack → <em>medium</em>.</li>
+        <li><strong>Combo escalation</strong> — IP-only <em>and</em> no-ALPN together is the classic C2 shape and escalates to <em>high</em>.</li>
+    </ul>
+    <p>Worked examples: <code>t13d1516h2_…</code> (Chrome 137) scores <strong>none</strong>;
+       <code>t12d210600_…</code> (Cobalt Strike, no ALPN) <strong>medium</strong>;
+       <code>t13i190800_…</code> (Sliver, IP-only + no ALPN) and
+       <code>t12i190700_…</code> (Metasploit) score <strong>high</strong>.</p>
 </div>
 
 <div class="tabs">
     <button class="tab active" onclick="switchTab('single')">Single Lookup</button>
     <button class="tab" onclick="switchTab('batch')">Batch Lookup</button>
+    <button class="tab" onclick="switchTab('hunt')">Hunt DB</button>
+    <button class="tab" onclick="switchTab('search')">Reverse Search</button>
 </div>
 
 <div id="single" class="tab-content active">
@@ -164,6 +177,45 @@
         </div>
 
         <button type="submit" class="btn">Batch Lookup</button>
+    </form>
+</div>
+
+<div id="hunt" class="tab-content">
+    <form method="POST" action="/hunt">
+        <div class="form-group">
+            <label>Hunt the JA4DB for risky structural patterns:</label>
+            <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
+                <label style="font-weight:normal;"><input type="checkbox" name="criteria" value="legacy-tls"> Legacy TLS (1.1 / 1.0 / SSL)</label>
+                <label style="font-weight:normal;"><input type="checkbox" name="criteria" value="no-sni"> Direct-to-IP / no SNI (<code>i</code>)</label>
+                <label style="font-weight:normal;"><input type="checkbox" name="criteria" value="no-alpn"> No ALPN (<code>00</code>)</label>
+                <label style="font-weight:normal;"><input type="checkbox" name="criteria" value="quic"> QUIC transport</label>
+                <label style="font-weight:normal;"><input type="checkbox" name="criteria" value="risky"> Risky (medium/high overall)</label>
+            </div>
+            <small style="color:#6b7280; display:block; margin-top:8px;">Multiple selections are ANDed together.</small>
+        </div>
+        <button type="submit" class="btn">Hunt Database</button>
+    </form>
+</div>
+
+<div id="search" class="tab-content">
+    <form method="POST" action="/search">
+        <div class="form-group">
+            <label for="term">Find fingerprints by application / User-Agent / metadata:</label>
+            <input type="text" id="term" name="term" placeholder="cobalt, curl, Chrome, nmap…" autocomplete="off">
+            <div style="margin-top:10px;">
+                <label for="field" style="font-weight:normal;">Restrict to field (optional):</label>
+                <select id="field" name="field">
+                    <option value="">All metadata fields</option>
+                    <option value="application">application</option>
+                    <option value="library">library</option>
+                    <option value="device">device</option>
+                    <option value="os">os</option>
+                    <option value="user_agent_string">user_agent_string</option>
+                    <option value="notes">notes</option>
+                </select>
+            </div>
+        </div>
+        <button type="submit" class="btn">Reverse Search</button>
     </form>
 </div>
 

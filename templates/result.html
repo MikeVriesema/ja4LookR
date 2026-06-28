@@ -35,8 +35,16 @@
     .status-near { background: #dbeafe; color: #1e3a8a; }
     .status-wildcard { background: #ede9fe; color: #5b21b6; }
     .status-partial { background: #fef3c7; color: #92400e; }
+    .status-cipher_variant { background: #fae8ff; color: #86198f; }
     .status-not-found { background: #fee2e2; color: #991b1b; }
     .status-error { background: #fef3c7; color: #92400e; }
+
+    .risk-panel { margin-top: 18px; padding: 14px 16px; border-radius: 6px; border-left: 5px solid; }
+    .risk-panel ul { margin: 8px 0 0 18px; }
+    .risk-none { background: #f0fdf4; border-left-color: #22c55e; }
+    .risk-low { background: #fefce8; border-left-color: #eab308; }
+    .risk-medium { background: #fff7ed; border-left-color: #f97316; }
+    .risk-high { background: #fef2f2; border-left-color: #ef4444; }
 
     .result-card {
         background: white;
@@ -121,12 +129,17 @@
         <span class="status-badge status-near">~ Near match</span>
     {% elif result.match_type == 'wildcard' %}
         <span class="status-badge status-wildcard">∗ Wildcard match</span>
+    {% elif result.match_type == 'cipher_variant' %}
+        <span class="status-badge status-cipher_variant">~ Cipher variant</span>
     {% elif result.match_type == 'partial' %}
         <span class="status-badge status-partial">~ Partial match</span>
     {% else %}
         <span class="status-badge status-not-found">✗ Not found in JA4DB</span>
     {% endif %}
     <div style="margin-top: 8px; font-size: 14px; color: #1e3a8a;">{{ result.match_label }}</div>
+    {% if result.browser_mimicry %}
+    <p style="color:#b91c1c; font-weight:600; margin-top:8px;">⚠ a+c match a known browser — possible mimicry / impersonation.</p>
+    {% endif %}
 </div>
 
 {% if parsed %}
@@ -167,6 +180,21 @@
             <div class="detail-value"><code>{{ parsed.ja4_c_extension_hash }}</code></div>
         </div>
     </div>
+    {% if parsed.risk %}
+    <div class="risk-panel risk-{{ parsed.risk.level }}">
+        <strong>Risk: {{ parsed.risk.level|upper }}</strong>
+        <span style="color:#6b7280;">(score {{ parsed.risk.score }})</span>
+        {% if parsed.risk.flags %}
+        <ul>
+            {% for f in parsed.risk.flags %}
+            <li><strong>{{ f.title }}</strong> — {{ f.detail }}</li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p style="margin-top:6px;">No legacy TLS, SNI present, ALPN advertised.</p>
+        {% endif %}
+    </div>
+    {% endif %}
 </div>
 {% elif result.is_wildcard %}
 <div class="warning-box">
