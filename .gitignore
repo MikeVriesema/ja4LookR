@@ -206,7 +206,24 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# JA4LookR cache and result files
+# JA4LookR bundled DB cache (kept locally, never committed — the live JA4DB is
+# behind ja4db.foxio.io enterprise access; ship this file out-of-band)
 .ja4_cache/
+
+# JA4LookR result / report output files
 ja4lookr_results.json
 ja4lookr_results_*.json
+*_results_*.json
+reports/
+
+# Claude / AI assistant working files
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.cursorrules
+memory/
+
+# AI-workflow scaffolding (superpowers plans/specs and generated templates)
+docs/superpowers/
+*.template
+*.tmpl

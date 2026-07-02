@@ -9,6 +9,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import HTTPException
 import re
 import json
+import secrets
 from ja4lookr import (JA4Lookup, VirusTotalLookup, parse_ja4, yara_rule_for,
                       has_wildcard, is_browser_record)
 from datetime import datetime
@@ -19,7 +20,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = os.getenv('SECRET_KEY', 'ja4lookr-secure-key-change-in-production')
+# Never fall back to a shared, publicly-known secret: without SECRET_KEY set we
+# mint an ephemeral per-process key so session cookies / flash messages can't be
+# forged. Production deployments must set SECRET_KEY in .env for stable sessions.
+_secret_key = os.getenv('SECRET_KEY')
+if not _secret_key:
+    _secret_key = secrets.token_hex(32)
+    app.logger.warning(
+        "SECRET_KEY not set; generated an ephemeral key. "
+        "Set SECRET_KEY in .env for stable sessions across restarts/workers."
+    )
+app.secret_key = _secret_key
 
 # Rate limiting to prevent abuse
 limiter = Limiter(
@@ -31,6 +42,14 @@ limiter = Limiter(
 
 # Initialize JA4Lookup with caching
 ja4_lookup = JA4Lookup()
+
+# Pre-warm the DB + in-memory indexes once at startup so the first request is
+# fast and every worker shares a ready index. Failures are swallowed — a lazy
+# retry happens on first request if the cache wasn't available yet.
+try:
+    ja4_lookup.warm()
+except Exception as exc:  # noqa: BLE001
+    app.logger.warning("JA4DB pre-warm skipped: %s", exc)
 
 # Initialize VirusTotal lookup (optional, requires API key)
 vt_lookup = VirusTotalLookup()

@@ -1,7 +1,7 @@
 # JA4LookR
 
-A JA4 fingerprint **threat-hunting** tool with CLI and Web interfaces. Pulls the
-full [JA4DB](https://ja4db.com), caches it locally (refreshed **hourly**), and
+A JA4 fingerprint **threat-hunting** tool with CLI and Web interfaces. Serves a
+locally bundled [JA4DB](https://ja4db.com) snapshot (offline-first) and
 resolves matches in-process — including **near**, **cipher-variant**, and
 **partial** matches when an exact lookup misses. Every parsed fingerprint is
 scored by a **risk engine** for the indicators threat hunters look for (legacy
@@ -23,8 +23,11 @@ Intelligence for enrichment.
 - **Tiered matching** — exact → near (same cipher+extension hash, different
   `ja4_a`) → **cipher_variant** (same `ja4_a`+`ja4_c`, different cipher hash —
   catches cipher randomization & browser mimicry) → partial → none.
-- **Local DB cache** — full JA4DB (~73k records, gzipped), auto-refreshed when
-  older than **1 hour**. All lookups served from RAM.
+- **Local DB cache (offline-first)** — full JA4DB (~73k records, gzipped) is
+  bundled at `.ja4_cache/ja4db_full.json.gz` and served from RAM. Lookups never
+  block on the network; updates are pulled only on explicit `--refresh`, and any
+  fetch failure falls back to the bundled copy (the live JA4DB is now behind
+  `ja4db.foxio.io` enterprise access).
 - **Wildcard search** — `*` matches any section, e.g.
   `t13d190900_*_97f8aa674fd9` (GoLang/Sliver), `*_8daaf6152771_*`, `t13*`.
 - **Fingerprint parser** — decodes every field of `ja4_a` with descriptions.
@@ -131,7 +134,7 @@ minimal lookup. JA4LookR is a superset:
 | Risk scoring (legacy TLS / IP-only / no-ALPN) | — | ✓ |
 | Structural DB hunting (`--hunt`) | — | ✓ |
 | Reverse metadata search (by app/UA/library) | — | ✓ |
-| Auto-cached DB, hourly refresh | manual file | ✓ |
+| Bundled offline DB cache (~73k records) | manual file | ✓ |
 | VirusTotal pivot + enrichment | — | ✓ |
 | YARA scaffolding | — | ✓ |
 | Web UI + REST API | — | ✓ |
@@ -222,9 +225,11 @@ The CLI shares the same engine as the web app — every match type, VirusTotal
 pivot, network enrichment, YARA scaffold, and JSON output is available in
 both. Pick whichever feels better for the moment; nothing is locked away.
 
-First run downloads the full JA4DB (~73k records, ~16s) and gzip-caches it
-under `.ja4_cache/ja4db_full.json.gz`. Subsequent runs load from disk in
-under a second.
+The full JA4DB (~73k records) ships gzip-cached at
+`.ja4_cache/ja4db_full.json.gz` and loads from disk in under a second — no
+network needed. If that file is ever missing, the first run tries to download
+it; run `--refresh` to pull updates (which safely falls back to the bundled
+copy when the endpoint is unavailable).
 
 #### Single Lookup
 
@@ -429,12 +434,19 @@ Optional query parameters:
 
 ```bash
 # JA4DB cache (no key required)
-# Cache lives at .ja4_cache/ja4db_full.json.gz, auto-refreshed when older than 1 hour.
+# Bundled offline at .ja4_cache/ja4db_full.json.gz; served as-is. Pull updates
+# with `--refresh`. Optionally point at a live endpoint (falls back to the
+# bundle on any error):
+# JA4DB_URL=https://ja4db.foxio.io/api/read/
+# JA4DB_API_KEY=your_enterprise_token   # if the endpoint requires auth
 
 # VirusTotal Intelligence (optional, only used with --vt)
 VIRUSTOTAL_API_KEY=your_key_here   # or VT_API_KEY
 
-# Flask secret key (change in production!)
+# Flask secret key — REQUIRED for stable production sessions.
+# If unset, the app generates an ephemeral per-process key (safe, but sessions
+# reset on restart and differ across workers). Generate one with:
+#   python3 -c "import secrets; print(secrets.token_hex(32))"
 SECRET_KEY="your-secure-random-key-here"
 ```
 
@@ -447,8 +459,10 @@ SECRET_KEY="your-secure-random-key-here"
 
 For production use:
 
-1. **Change the Flask secret key** in `app.py` (CRITICAL!)
-2. **Use a production WSGI server** (gunicorn, waitress, uWSGI)
+1. **Set `SECRET_KEY` in `.env`** (CRITICAL!) — the app no longer ships a
+   hard-coded fallback; without it each worker mints its own ephemeral key.
+2. **Use a production WSGI server** via the `wsgi:app` entrypoint (gunicorn on
+   Linux/macOS, waitress on Windows). The DB index is pre-warmed at startup.
 3. **Set up reverse proxy** (nginx, Apache) with SSL/TLS
 4. **Keep binding to 127.0.0.1** (localhost only)
 5. **Configure proper logging**
@@ -462,7 +476,13 @@ gunicorn -w 4 \
          --access-logfile access.log \
          --error-logfile error.log \
          --log-level info \
-         app:app
+         wsgi:app
+```
+
+On Windows, use waitress:
+
+```bash
+waitress-serve --listen=127.0.0.1:5009 wsgi:app
 ```
 
 Example nginx configuration with SSL:

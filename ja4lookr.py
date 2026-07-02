@@ -257,7 +257,7 @@ class JA4Lookup:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         try:
-            resp = requests.get(JA4DB_URL, timeout=120, headers=headers)
+            resp = requests.get(JA4DB_URL, timeout=60, headers=headers)
             resp.raise_for_status()
             data = resp.json()
         except (requests.exceptions.RequestException, ValueError) as e:
@@ -287,11 +287,22 @@ class JA4Lookup:
         if self._db is not None:
             return
         path = self._db_path()
-        if path and self._cache_fresh():
+        if path and path.exists():
+            # Offline-first: always serve the bundled/cached DB without blocking
+            # on the network. The live JA4DB moved behind ja4db.foxio.io
+            # (enterprise access), so freshness only drives an explicit
+            # --refresh — never a lazy fetch on the request hot path.
             with gzip.open(path, "rt", encoding="utf-8") as f:
                 self._db = json.load(f)
-        else:
-            self.refresh(force=True)
+            self._indexes = None
+            return
+        # No local cache at all: attempt a one-time pull (may raise if offline).
+        self.refresh(force=True)
+
+    def warm(self):
+        """Eagerly load the DB and build indexes (used to pre-warm the web app)."""
+        self._load()
+        self._build_indexes()
 
     def _build_indexes(self):
         if self._indexes is not None:
