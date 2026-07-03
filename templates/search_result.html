@@ -1,25 +1,22 @@
 {% extends "base.html" %}
 {% block title %}JA4LookR - Reverse Search{% endblock %}
 {% block content %}
-<h2>Reverse Search Results</h2>
-<p style="color:#6b7280;">Term: <strong>{{ term }}</strong>
+<h2>Reverse search results</h2>
+<div class="count-line">Term: {{ term }}
    {% if field %}(field: {{ field }}){% else %}(all metadata fields){% endif %} ·
-   {{ count }} record(s) · {{ timestamp }}</p>
+   {{ count }} record(s) · {{ timestamp }}</div>
 <p><a href="/">&larr; New search</a></p>
 {% if records %}
-<table style="width:100%; border-collapse:collapse; margin-top:16px;">
+<table>
     <thead>
-        <tr style="text-align:left; border-bottom:2px solid #e5e7eb;">
-            <th style="padding:8px;">JA4</th><th style="padding:8px;">Application</th>
-            <th style="padding:8px;">User-Agent</th>
-        </tr>
+        <tr><th>JA4</th><th>Application</th><th>User-Agent</th></tr>
     </thead>
     <tbody>
         {% for r in records %}
-        <tr style="border-bottom:1px solid #f0f0f0;">
-            <td style="padding:8px; font-family:monospace;">{{ r.ja4_fingerprint }}</td>
-            <td style="padding:8px;">{{ r.application or r.library or '—' }}</td>
-            <td style="padding:8px; font-size:12px;">{{ (r.user_agent_string or '')[:80] }}</td>
+        <tr>
+            <td class="mono" style="color:var(--accent);">{{ r.ja4_fingerprint }}</td>
+            <td>{{ r.application or r.library or '—' }}</td>
+            <td style="font-size:12px;">{{ (r.user_agent_string or '')[:80] }}</td>
         </tr>
         {% endfor %}
     </tbody>

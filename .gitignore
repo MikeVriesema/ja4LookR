@@ -210,6 +210,18 @@ __marimo__/
 # behind ja4db.foxio.io enterprise access; ship this file out-of-band)
 .ja4_cache/
 
+# Raw JA4DB source snapshots (large; merged into the bundled cache out-of-band)
+db/
+
+# Design mockups / drafts
+JA4 Lookup.html
+*.mockup.html
+
+# Local environment overrides / secrets (keep .env.example tracked)
+.env.*
+!.env.example
+*.env
+
 # JA4LookR result / report output files
 ja4lookr_results.json
 ja4lookr_results_*.json

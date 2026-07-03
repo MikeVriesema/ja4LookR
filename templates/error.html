@@ -4,52 +4,20 @@
 
 {% block extra_css %}
 <style>
-    .error-container {
-        text-align: center;
-        padding: 60px 20px;
-    }
-
-    .error-icon {
-        font-size: 5em;
-        margin-bottom: 20px;
-    }
-
-    .error-title {
-        font-size: 2em;
-        color: #dc2626;
-        margin-bottom: 15px;
-    }
-
-    .error-message {
-        font-size: 1.2em;
-        color: #6b7280;
-        margin-bottom: 30px;
-    }
-
+    .error-container { text-align: center; padding: 60px 20px; }
+    .error-title { font-size: 26px; color: var(--bad); margin-bottom: 12px; }
+    .error-message { font-size: 15px; color: var(--muted); margin-bottom: 26px; }
     .error-box {
-        background: #fee2e2;
-        border-left: 4px solid #dc2626;
-        padding: 20px;
-        border-radius: 5px;
-        margin: 30px auto;
-        max-width: 600px;
-        text-align: left;
+        background: var(--bad-bg); border: 1px solid var(--bad-bd); border-left-width: 3px;
+        padding: 18px 20px; border-radius: 10px; margin: 24px auto; max-width: 600px; text-align: left;
     }
-
-    .error-box h3 {
-        color: #991b1b;
-        margin-bottom: 10px;
-    }
-
-    .error-box p {
-        color: #7f1d1d;
-    }
+    .error-box h3 { color: #f2a3a8; margin-bottom: 8px; }
+    .error-box p { color: var(--text-2); }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="error-container">
-    <div class="error-icon">⚠️</div>
     <h1 class="error-title">{{ error }}</h1>
     <p class="error-message">{{ message }}</p>
 
@@ -58,8 +26,8 @@
         <p>{{ message }}</p>
     </div>
 
-    <div style="margin-top: 40px;">
-        <a href="/" class="btn">← Back to Home</a>
+    <div style="margin-top: 36px;">
+        <a href="/" class="btn">← Back to lookup</a>
     </div>
 </div>
 {% endblock %}

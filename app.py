@@ -3,7 +3,8 @@
 JA4LookR Flask Web Application
 A secure web interface for JA4 fingerprint lookups
 """
-from flask import Flask, render_template, request, jsonify, flash, redirect, url_for
+from flask import (Flask, render_template, request, jsonify, flash, redirect,
+                   url_for, send_from_directory, abort)
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import HTTPException
@@ -11,7 +12,8 @@ import re
 import json
 import secrets
 from ja4lookr import (JA4Lookup, VirusTotalLookup, parse_ja4, yara_rule_for,
-                      has_wildcard, is_browser_record)
+                      has_wildcard, is_browser_record, signature_breakdown,
+                      detect_ja4_type, TYPE_LABELS)
 from datetime import datetime
 import os
 from dotenv import load_dotenv
@@ -54,8 +56,9 @@ except Exception as exc:  # noqa: BLE001
 # Initialize VirusTotal lookup (optional, requires API key)
 vt_lookup = VirusTotalLookup()
 
-# Allow alphanumerics, underscores, and `*` wildcards used for hunting patterns
-JA4_PATTERN = re.compile(r'^[a-z0-9_*]{8,}$', re.IGNORECASE)
+# Allow alphanumerics, underscores, `*` wildcards, and `-` (JA4T/JA4TScan encode
+# their TCP option lists as dash-separated numbers, e.g. 64240_2-4-8-1-3_1460_7).
+JA4_PATTERN = re.compile(r'^[a-z0-9_*-]{8,}$', re.IGNORECASE)
 
 
 def validate_fingerprint(fingerprint):
@@ -101,11 +104,21 @@ def format_result(matches, match_type, fingerprint):
             'message': 'Fingerprint not found in JA4DB',
             'recommendation': 'Try a wildcard pattern, or pivot via VirusTotal / threat intel.'}
 
+def _db_count():
+    """Number of records in the loaded snapshot (0 if not warmed)."""
+    try:
+        return len(ja4_lookup._db or [])
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 @app.route('/')
 def index():
     """Home page with lookup form."""
     return render_template('index.html',
-                           vt_configured=vt_lookup.is_configured())
+                           vt_configured=vt_lookup.is_configured(),
+                           db_count=_db_count(),
+                           nav_active='lookup')
 
 @app.route('/lookup', methods=['POST'])
 @limiter.limit("30 per minute")
@@ -123,6 +136,7 @@ def lookup():
     try:
         matches, match_type = ja4_lookup.lookup(fingerprint)
         formatted = format_result(matches, match_type, fingerprint)
+        breakdown = signature_breakdown(fingerprint)
         parsed = parse_ja4(fingerprint)
         yara_rule = yara_rule_for(fingerprint)
 
@@ -132,8 +146,10 @@ def lookup():
 
         export_payload = {
             'fingerprint': fingerprint,
+            'type': breakdown['type'],
             'match_type': match_type,
             'is_wildcard': has_wildcard(fingerprint),
+            'signature': breakdown,
             'parsed': parsed,
             'ja4db': {'match_type': match_type, 'matches': matches},
             'virustotal': vt_result,
@@ -143,11 +159,13 @@ def lookup():
 
         return render_template('result.html',
                                result=formatted,
+                               breakdown=breakdown,
                                parsed=parsed,
                                vt_result=vt_result,
                                vt_configured=vt_lookup.is_configured(),
                                yara_rule=yara_rule,
                                export_payload=export_payload,
+                               nav_active='lookup',
                                timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     except Exception as e:
         flash(f'Lookup error: {str(e)}', 'error')
@@ -271,16 +289,51 @@ def api_lookup(fingerprint):
 
         return jsonify({
             'fingerprint': fingerprint,
+            'type': detect_ja4_type(fingerprint),
             'is_wildcard': has_wildcard(fingerprint),
             'match_type': match_type,
             'matches': matches,
             'parsed': parsed,
+            'signature': signature_breakdown(fingerprint),
             'virustotal': vt_result,
             'yara': yara_rule_for(fingerprint),
             'timestamp': datetime.now().isoformat(),
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/about')
+def about():
+    """JA4+ suite reference / About page (formats, diagrams, how the tool works)."""
+    suite = [
+        ('JA4',   'JA4',      'TLS Client Fingerprinting', 'JA4.png',
+         't13d1516h2_8daaf6152771_b186095e22b6'),
+        ('JA4Server', 'JA4S', 'TLS Server Response Fingerprinting', 'JA4S.png',
+         't120300_c030_5e2616a54c73'),
+        ('JA4HTTP', 'JA4H',   'HTTP Client Fingerprinting', 'JA4H.png',
+         'ge11cn020000_9ed1ff1f7b03_cd8dafe26982'),
+        ('JA4Latency', 'JA4L', 'Client→Server Latency / Light-Distance', 'JA4L.png', None),
+        ('JA4X509', 'JA4X',   'X.509 TLS Certificate Fingerprinting', 'JA4X.png',
+         '2166164053c1_2166164053c1_30d204a01551'),
+        ('JA4SSH', 'JA4SSH',  'SSH Traffic Fingerprinting', 'JA4SSH.png',
+         'c76s76_c71s59_c0s70'),
+        ('JA4TCP', 'JA4T',    'TCP Client Fingerprinting', 'JA4T.png',
+         '64240_2-1-3-1-1-4_1460_8'),
+        ('JA4DHCP', 'JA4D',   'DHCP Fingerprinting', 'JA4D.png',
+         'disco0000in_61-12-60-55_1-3-6-15-31-33-43-44-46-47-119-121-249-252'),
+        ('JA4DHCPv6', 'JA4D6', 'DHCPv6 Fingerprinting', 'JA4D6.png',
+         'solct0010nn_8-1-3-6_24-23'),
+    ]
+    return render_template('about.html', suite=suite, nav_active='about')
+
+
+@app.route('/assets/<path:filename>')
+def assets(filename):
+    """Serve the JA4+ diagram images used on the spec page."""
+    if '..' in filename or filename.startswith(('/', '\\')):
+        abort(404)
+    return send_from_directory(os.path.join(app.root_path, 'assets'), filename)
+
 
 @app.route('/health')
 def health():

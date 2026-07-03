@@ -1,12 +1,33 @@
 # JA4LookR
 
-A JA4 fingerprint **threat-hunting** tool with CLI and Web interfaces. Serves a
-locally bundled [JA4DB](https://ja4db.com) snapshot (offline-first) and
-resolves matches in-process — including **near**, **cipher-variant**, and
-**partial** matches when an exact lookup misses. Every parsed fingerprint is
-scored by a **risk engine** for the indicators threat hunters look for (legacy
-TLS, IP-only handshakes, missing ALPN). Optionally pivots to VirusTotal
-Intelligence for enrichment.
+> [!NOTE]
+> **Creation of this tool was AI-assisted (built with Claude).** The tool itself is
+> **not AI-enabled** — it contains no models, inference, or LLM calls at runtime; it is
+> plain deterministic Python (fingerprint decoding, an offline database lookup, and
+> optional VirusTotal/YARA integrations). All decoding was **tested against real JA4+
+> signatures** from the FoxIO ja4plus mapping (Chrome, Sliver, Cobalt Strike, IcedID,
+> Qakbot, SoftEther, and more). The JA4+ fingerprinting standard itself is the work of
+> **[FoxIO](https://foxio.io)** — see [Credits](#credits--acknowledgements).
+
+A **JA4+ suite** fingerprint **threat-hunting** tool with CLI and Web interfaces.
+Decodes the whole suite — **JA4** (TLS client), **JA4S** (TLS server), **JA4H**
+(HTTP), **JA4X** (X.509 cert), **JA4T** (TCP) — and serves a locally bundled
+[JA4DB](https://ja4db.com) snapshot (offline-first), resolving matches in-process
+including **near**, **cipher-variant**, and **partial** matches when an exact
+lookup misses. Every parsed JA4 is scored by a **risk engine** for the indicators
+threat hunters look for (legacy TLS, IP-only handshakes, missing ALPN). Optionally
+pivots to VirusTotal Intelligence (JA4/JA4S) for enrichment.
+
+> [!IMPORTANT]
+> **JA4DB access changed.** The public database moved behind
+> [ja4db.foxio.io](https://ja4db.foxio.io): live lookups now require a **free
+> FoxIO account** (register with a work email), and **full database exports are
+> limited to enterprise plans**. JA4LookR is **offline-first**: it runs entirely
+> against a **bundled/legacy JA4DB snapshot** (~77k merged records shipped at
+> `.ja4_cache/ja4db_full.json.gz`), so lookups, hunting, and risk scoring need no
+> FoxIO account. If you have enterprise export access, point `JA4DB_URL` (and
+> `JA4DB_API_KEY` if required) at the live endpoint and run `--refresh` to pull
+> updates — any fetch failure silently falls back to the bundled copy.
 
 ## Features
 
@@ -23,14 +44,18 @@ Intelligence for enrichment.
 - **Tiered matching** — exact → near (same cipher+extension hash, different
   `ja4_a`) → **cipher_variant** (same `ja4_a`+`ja4_c`, different cipher hash —
   catches cipher randomization & browser mimicry) → partial → none.
-- **Local DB cache (offline-first)** — full JA4DB (~73k records, gzipped) is
-  bundled at `.ja4_cache/ja4db_full.json.gz` and served from RAM. Lookups never
-  block on the network; updates are pulled only on explicit `--refresh`, and any
-  fetch failure falls back to the bundled copy (the live JA4DB is now behind
-  `ja4db.foxio.io` enterprise access).
+- **Full JA4+ decoding** — structural signature breakdown for every suite member:
+  JA4 (protocol/TLS/SNI/ciphers/extensions/ALPN), JA4S (server), JA4H (HTTP
+  method/version/cookie/headers/lang), JA4X (cert), JA4T (TCP). Type is
+  auto-detected; the DB indexes all members for exact/wildcard lookup.
+- **Local DB cache (offline-first)** — merged JA4DB snapshot (~77k deduped
+  records, gzipped) bundled at `.ja4_cache/ja4db_full.json.gz` and served from
+  RAM. Lookups never block on the network; updates are pulled only on explicit
+  `--refresh`, and any fetch failure falls back to the bundled copy. Rebuild the
+  cache from raw snapshots under `db/ja4db/` with
+  `python tools/build_ja4db_cache.py` (tolerates truncated downloads, dedupes).
 - **Wildcard search** — `*` matches any section, e.g.
   `t13d190900_*_97f8aa674fd9` (GoLang/Sliver), `*_8daaf6152771_*`, `t13*`.
-- **Fingerprint parser** — decodes every field of `ja4_a` with descriptions.
 - **VirusTotal pivoting** — `--vt` runs `behavior_network:<fp>` and enriches the
   top hits with their **contacted IPs / domains / URLs** (defanged). Verify your
   key + privileges with `--vt-check`.
@@ -678,18 +703,58 @@ Contributions welcome! Please:
 
 MIT License - See LICENSE file for details
 
-## Acknowledgments
+## Dependencies & SBOM
 
-- [JA4+ Network Fingerprinting](https://github.com/FoxIO-LLC/ja4) by FoxIO
-- [JA4DB](https://ja4db.com) - The fingerprint database
+Runtime dependencies are intentionally minimal. Declared in
+[`requirements.txt`](requirements.txt):
+
+| Package | Constraint | Purpose | License |
+|---|---|---|---|
+| `requests` | `>=2.31.0` | JA4DB refresh + VirusTotal HTTP | Apache-2.0 |
+| `Flask` | `>=3.0.0` | Web application framework | BSD-3-Clause |
+| `Flask-Limiter` | `>=3.5.0` | Per-route rate limiting | MIT |
+| `python-dotenv` | `>=1.0.0` | Load `.env` config | BSD-3-Clause |
+| `Werkzeug` | `>=3.0.0` | WSGI utilities (Flask core) | BSD-3-Clause |
+| `gunicorn` | `>=21.2.0` | Production WSGI server (Linux/macOS) | MIT |
+| `waitress` | `>=2.1.2` | Production WSGI server (Windows) | ZPL-2.1 |
+| `pytest` | `>=8.0.0` | Test suite (dev only) | MIT |
+
+**Software Bill of Materials.** A CycloneDX SBOM including transitive
+dependencies can be generated with:
+
+```bash
+pip install cyclonedx-bom
+cyclonedx-py requirements requirements.txt -o sbom.json    # CycloneDX JSON
+```
+
+Key transitive packages pulled in by the above (versions resolved at build time):
+`Jinja2` (BSD-3-Clause), `MarkupSafe` (BSD-3-Clause), `click` (BSD-3-Clause),
+`itsdangerous` (BSD-3-Clause), `blinker` (MIT), `limits` (MIT), `urllib3` (MIT),
+`certifi` (MPL-2.0), `charset-normalizer` (MIT), `idna` (BSD-3-Clause). All are
+OSI-approved permissive licenses. The Python standard library (`argparse`,
+`gzip`, `json`, `re`, `hashlib` semantics via the JA4 spec, etc.) is used for
+everything else — no other third-party runtime code.
+
+## Credits & Acknowledgements
+
+- **JA4+ fingerprinting standard, reference diagrams, and JA4DB — © [FoxIO, LLC](https://foxio.io).**
+  JA4+ is [FoxIO-LLC/ja4](https://github.com/FoxIO-LLC/ja4) (BSD 3-Clause, patent
+  pending). The diagrams on the in-app **About** page and the fingerprint methods
+  are entirely FoxIO's work; JA4LookR is an independent offline companion tool and
+  claims no ownership of the JA4+ methods or database.
+- **[JA4DB](https://ja4db.foxio.io)** — the community fingerprint database (now
+  behind a FoxIO account; full exports are enterprise-only).
+- Test signatures are drawn from FoxIO's published
+  [ja4plus-mapping](https://github.com/FoxIO-LLC/ja4/blob/main/ja4plus-mapping.csv).
+- **Tooling:** this repository was **AI-assisted (Claude)** and verified against the
+  real signatures above.
 
 ## Support
 
-For issues, questions, or suggestions:
-- Open an issue on GitHub
-- Check existing issues for solutions
-- Review the documentation
+Open an issue on GitHub for problems, questions, or suggestions.
 
 ---
 
-**Note**: This tool queries the public JA4DB API. Please use responsibly and respect their rate limits.
+**Note**: JA4LookR runs **offline** against a bundled JA4DB snapshot by default.
+Live JA4DB access requires a FoxIO account; please respect FoxIO's terms and any
+rate limits when using `--refresh` against the live endpoint.

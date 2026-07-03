@@ -2,6 +2,8 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ja4lookr import (  # noqa: E402
@@ -176,3 +178,107 @@ def test_vt_verify_key_no_key(monkeypatch):
 def test_vt_is_configured_reads_env(monkeypatch):
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "deadbeef")
     assert VirusTotalLookup().is_configured()
+
+
+# ----- JA4+ suite: type detection + structural decoding -----
+from ja4lookr import (  # noqa: E402
+    detect_ja4_type, signature_breakdown, parse_ja4s, parse_ja4h, parse_ja4t, parse_ja4x,
+)
+
+JA4S = "t130200_1301_234ea6891581"
+JA4H = "ge11cn20enus_9dc949149365_e5627efa2ab1_a1cf8d1e2f3b"
+JA4T = "1024_2-4-8-1-3_1460_8"
+JA4X = "2bab15409345_af684594efb4_000000000000"
+
+
+JA4H3 = "ge11cn060000_4e59edc1297a_4da5efaf0cbd"   # 3-section JA4H (no cookie-value hash)
+JA4TSCAN = "28960_2-4-8-1-3_1460_3_1-4-8-16"
+
+
+def test_detect_types():
+    assert detect_ja4_type(CHROME) == "ja4"
+    assert detect_ja4_type(JA4S) == "ja4s"
+    assert detect_ja4_type(JA4H) == "ja4h"
+    assert detect_ja4_type(JA4H3) == "ja4h"          # 3-part JA4H
+    assert detect_ja4_type(JA4T) == "ja4t"
+    assert detect_ja4_type(JA4TSCAN) == "ja4tscan"   # 5-part TCP scan
+    assert detect_ja4_type(JA4X) == "ja4x"
+    assert detect_ja4_type("t13d190900_*_97f8aa674fd9") == "unknown"  # wildcard
+    assert detect_ja4_type("garbage") == "unknown"
+
+
+def test_breakdown_ja4h_3part_and_scan():
+    sig = signature_breakdown(JA4H3)
+    assert sig["type"] == "ja4h" and sig["valid"]
+    assert len(sig["segments"]) == 3                 # a/b/c, no d
+    assert signature_breakdown(JA4TSCAN)["type"] == "ja4tscan"
+
+
+# Real-world fingerprints from the FoxIO ja4plus mapping — every suite member
+# must classify correctly and produce a valid decode.
+SUITE_CASES = {
+    "ja4":   "t13d1516h2_8daaf6152771_02713d6af862",   # Chrome
+    "ja4s":  "t120300_c030_5e2616a54c73",              # IcedID
+    "ja4x":  "2166164053c1_2166164053c1_30d204a01551", # Cobalt Strike cert
+    "ja4h":  "ge11cn020000_9ed1ff1f7b03_cd8dafe26982", # IcedID dropper (3-part)
+    "ja4ssh": "c76s76_c71s59_c0s70",                   # reverse SSH shell
+    "ja4l":  "5191_42_45014",                          # latency / light-distance
+    "ja4t":  "64240_2-1-3-1-1-4_1460_8",               # Windows 11
+    "ja4tscan": "28960_2-4-8-1-3_1460_3_1-4-8-16",     # Epson printer
+    "ja4d":  "disco0000in_61-12-60-55_1-3-6-15-31-33-43-44-46-47-119-121-249-252",
+    "ja4d6": "solct0010nn_8-1-3-6_24-23",              # Sony receiver
+}
+
+
+@pytest.mark.parametrize("want,fp", list(SUITE_CASES.items()))
+def test_full_suite_detection_and_decode(want, fp):
+    assert detect_ja4_type(fp) == want
+    sig = signature_breakdown(fp)
+    assert sig["valid"] and sig["type"] == want
+    assert sig["segments"] and sig["decode"]
+
+
+def test_ja4h_two_part_darkgate_lumma():
+    for fp in ("po10nn060000_cdb958d032b0", "po11nn050000_d253db9d024b"):
+        sig = signature_breakdown(fp)
+        assert sig["type"] == "ja4h" and sig["valid"]
+        assert len(sig["segments"]) == 2             # a/b only
+
+
+def test_breakdown_ja4_has_risk_and_segments():
+    sig = signature_breakdown(SLIVER)
+    assert sig["type"] == "ja4" and sig["valid"]
+    assert sig["risk"]["level"] == "high"
+    assert len(sig["segments"]) == 3              # JA4_a / b / c
+    assert len(sig["segments"][0]["chars"]) == 6  # 6 ja4_a fields
+
+
+def test_breakdown_ja4h_fields():
+    d = parse_ja4h(JA4H)
+    labels = {f["label"]: f["meaning"] for f in d["fields"]}
+    assert labels["Method"] == "GET"
+    assert labels["HTTP version"] == "HTTP/1.1"
+    assert "present" in labels["Cookie"]
+    sig = signature_breakdown(JA4H)
+    assert sig["type"] == "ja4h" and sig["risk"] is None
+    assert len(sig["segments"]) == 4              # JA4H a/b/c/d
+
+
+def test_breakdown_ja4s_ja4t_ja4x():
+    assert "server" in parse_ja4s(JA4S)["summary"]
+    assert "window 1024" in parse_ja4t(JA4T)["summary"]
+    assert parse_ja4x(JA4X)["fields"][0]["label"] == "Issuer RDNs"
+    for fp, t in [(JA4S, "ja4s"), (JA4T, "ja4t"), (JA4X, "ja4x")]:
+        assert signature_breakdown(fp)["type"] == t
+
+
+def test_breakdown_invalid_is_marked():
+    assert signature_breakdown("t13d190900_*_97f8aa674fd9")["valid"] is False
+    assert signature_breakdown("nonsense")["valid"] is False
+
+
+def test_vt_type_gate_rejects_non_tls():
+    # A configured key must not fire a network call for HTTP/cert/TCP members.
+    vt = VirusTotalLookup(api_key="deadbeef")
+    assert vt.lookup_ja4(JA4H)["status"] == "unsupported_type"
+    assert vt.lookup_ja4(JA4X)["status"] == "unsupported_type"

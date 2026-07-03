@@ -189,6 +189,367 @@ def parse_ja4(fingerprint):
     }
 
 
+# ----- JA4+ suite: type detection + structural decoding -----
+# The full suite: JA4 (TLS client), JA4S (TLS server), JA4H (HTTP client),
+# JA4X (X.509 cert), JA4T/JA4TS/JA4TScan (TCP). Each has its own layout; the
+# JA4DB indexes them all, so exact/wildcard lookup works for every type — these
+# decoders add the human-readable "signature breakdown" per type.
+
+HTTP_METHODS = {"ge": "GET", "po": "POST", "pu": "PUT", "de": "DELETE",
+                "he": "HEAD", "op": "OPTIONS", "pa": "PATCH", "co": "CONNECT",
+                "tr": "TRACE"}
+HTTP_VERSIONS = {"10": "HTTP/1.0", "11": "HTTP/1.1", "20": "HTTP/2", "30": "HTTP/3"}
+
+
+JA4H_A_RE = re.compile(r"^[a-z]{2}\d{2}[cn][rn]\d{2}")  # method,ver,cookie,referer,hdrs
+JA4SSH_SEG_RE = re.compile(r"^c\d+s\d+$")               # cNNsNN
+DASH_NUM_RE = re.compile(r"^\d+(?:-\d+)*$")             # dash-separated integer list
+# DHCPv6 message-type tokens (ja4d6 first segment starts with one of these).
+JA4D6_TYPES = ("solct", "solic", "adver", "confi", "renew", "rebin",
+               "reply", "recon", "relea", "decli", "infor")
+
+
+def detect_ja4_type(fp):
+    """Best-effort classification of a JA4+ fingerprint into its suite member."""
+    if not fp or "*" in fp:
+        return "unknown"
+    s = fp.strip().lower()
+    parts = s.split("_")
+    np = len(parts)
+
+    # JA4SSH: every segment is cNNsNN (client/server payload, packet, ack counts).
+    if 2 <= np <= 3 and all(JA4SSH_SEG_RE.match(p) for p in parts):
+        return "ja4ssh"
+    # TCP numeric family: window_options_mss_scale[_scanresponses].
+    if np in (4, 5) and all(re.fullmatch(r"[\d\-]+", p) for p in parts):
+        return "ja4tscan" if np == 5 else "ja4t"
+    # JA4L / JA4LS: 2–3 plain integers (latency[_ttl][_app-handshake-latency]).
+    # Exclude the all-12-digit case, which is a JA4X hash triple.
+    if np in (2, 3) and all(p.isdigit() for p in parts) \
+            and not (np == 3 and all(len(p) == 12 for p in parts)):
+        return "ja4l"
+    # JA4D / JA4D6 (DHCP): message-type word + two dash-number option lists.
+    if np == 3 and re.match(r"^[a-z]{3,}", parts[0]) and \
+            DASH_NUM_RE.match(parts[1]) and DASH_NUM_RE.match(parts[2]):
+        return "ja4d6" if parts[0][:5] in JA4D6_TYPES else "ja4d"
+    # JA4H (HTTP): ja4h_a pattern, emitted with 2, 3, or 4 sections.
+    if 2 <= np <= 4 and JA4H_A_RE.match(parts[0]):
+        return "ja4h"
+    if np == 3:
+        a, b, c = parts
+        # JA4X: three 12-hex hashes, no structured ja4_a.
+        if all(re.fullmatch(r"[0-9a-f]{12}", p) for p in parts):
+            return "ja4x"
+        # JA4 (client): ja4_a is 10 chars with a d/i SNI flag at index 3.
+        if re.match(r"^[a-z]\d\d[di]\d{4}[a-z0-9]{2}$", a) and \
+           re.fullmatch(r"[0-9a-f]{12}", b) and re.fullmatch(r"[0-9a-f]{12}", c):
+            return "ja4"
+        # JA4S (server): ja4_a is 7 chars, ja4_b is a 4-hex chosen cipher.
+        if re.match(r"^[a-z]\d\d\d{2}[a-z0-9]{2}$", a) and re.fullmatch(r"[0-9a-f]{4}", b):
+            return "ja4s"
+    return "unknown"
+
+
+def _seg(label, chars):
+    return {"label": label, "chars": chars}
+
+
+def _field(code, label, meaning, sev=None):
+    return {"code": code, "label": label, "meaning": meaning, "sev": sev}
+
+
+def parse_ja4s(fp):
+    """Decode a JA4S (TLS server response) fingerprint.
+
+    ja4s_a = [transport][tls_version 2c][ext_count 2d][alpn 2c]
+    ja4s_b = chosen cipher suite (4 hex)
+    ja4s_c = truncated SHA-256 of the server extensions
+    """
+    parts = fp.split("_")
+    if len(parts) != 3 or len(parts[0]) < 7:
+        return None
+    a, b, c = parts
+    transport, tls_ver, ext_code, alpn = a[0], a[1:3], a[3:5], a[5:7]
+    try:
+        ext_n = int(ext_code)
+    except ValueError:
+        ext_n = None
+    fields = [
+        _field(transport, "Transport", TRANSPORT.get(transport, f"Unknown ({transport})")),
+        _field(tls_ver, "TLS version", TLS_VERSIONS.get(tls_ver, f"Unknown ({tls_ver})"),
+               sev="high" if tls_ver in LEGACY_TLS else None),
+        _field(ext_code, "Extensions", f"{ext_n} server extensions" if ext_n is not None else "unparsed"),
+        _field(alpn, "ALPN", ALPN_KNOWN.get(alpn, f"ALPN '{alpn}'"),
+               sev="low" if alpn == "00" else None),
+        _field(b, "Chosen cipher", f"Server-selected cipher suite 0x{b}"),
+        _field(c, "Extension hash", "SHA-256 of the server extensions (truncated)"),
+    ]
+    segments = [
+        _seg("JA4S_a", [{"v": transport}, {"v": tls_ver}, {"v": ext_code}, {"v": alpn}]),
+        _seg("JA4S_b", [{"v": b}]),
+        _seg("JA4S_c", [{"v": c}]),
+    ]
+    summary = (f"{TRANSPORT.get(transport, transport)} server · "
+               f"{TLS_VERSIONS.get(tls_ver, tls_ver)} · {ext_n} extensions · "
+               f"cipher 0x{b} · ALPN={ALPN_KNOWN.get(alpn, alpn)}")
+    return {"fields": fields, "segments": segments, "summary": summary}
+
+
+def parse_ja4h(fp):
+    """Decode a JA4H (HTTP client) fingerprint.
+
+    ja4h_a = [method 2c][version 2d][cookie c/n][referer r/n][hdr_count 2d][accept_lang 4c]
+    ja4h_b = truncated hash of the header names
+    ja4h_c = truncated hash of the Cookie field names
+    ja4h_d = truncated hash of the Cookie name=value pairs (omitted in the 3-part form)
+    """
+    parts = fp.split("_")
+    if len(parts) not in (2, 3, 4) or len(parts[0]) < 12:
+        return None
+    a, b = parts[0], parts[1]
+    c = parts[2] if len(parts) >= 3 else None
+    d = parts[3] if len(parts) == 4 else None
+    method, ver, cookie, referer, hdr_code, lang = a[:2], a[2:4], a[4], a[5], a[6:8], a[8:12]
+    try:
+        hdr_n = int(hdr_code)
+    except ValueError:
+        hdr_n = None
+    lang_h = "none" if lang == "0000" else lang.replace("0", "").upper() or lang
+    fields = [
+        _field(method, "Method", HTTP_METHODS.get(method, f"Unknown ({method})")),
+        _field(ver, "HTTP version", HTTP_VERSIONS.get(ver, f"Unknown ({ver})")),
+        _field(cookie, "Cookie", "Cookie header present" if cookie == "c" else "no Cookie header"),
+        _field(referer, "Referer", "Referer present" if referer == "r" else "no Referer"),
+        _field(hdr_code, "Headers", f"{hdr_n} headers" if hdr_n is not None else "unparsed"),
+        _field(lang, "Accept-Language", f"primary language {lang_h}"),
+        _field(b, "Header hash", "SHA-256 of the ordered header names (truncated)"),
+    ]
+    a_chars = [{"v": method}, {"v": ver}, {"v": cookie}, {"v": referer},
+               {"v": hdr_code}, {"v": lang}]
+    segments = [_seg("JA4H_a", a_chars), _seg("JA4H_b", [{"v": b}])]
+    if c is not None:
+        fields.append(_field(c, "Cookie-field hash", "SHA-256 of the Cookie field names (truncated)"))
+        segments.append(_seg("JA4H_c", [{"v": c}]))
+    if d is not None:
+        fields.append(_field(d, "Cookie-value hash", "SHA-256 of the Cookie name=value pairs (truncated)"))
+        segments.append(_seg("JA4H_d", [{"v": d}]))
+    summary = (f"{HTTP_METHODS.get(method, method)} · {HTTP_VERSIONS.get(ver, ver)} · "
+               f"{'cookie' if cookie == 'c' else 'no cookie'} · "
+               f"{'referer' if referer == 'r' else 'no referer'} · {hdr_n} headers")
+    return {"fields": fields, "segments": segments, "summary": summary}
+
+
+def parse_ja4t(fp):
+    """Decode a JA4T (TCP) fingerprint: window_options_mss_windowscale."""
+    parts = fp.split("_")
+    if len(parts) != 4:
+        return None
+    window, opts, mss, scale = parts
+    fields = [
+        _field(window, "TCP window", f"advertised window size {window}"),
+        _field(opts, "TCP options", f"option kinds in order: {opts or 'none'}"),
+        _field(mss, "MSS", f"maximum segment size {mss}"),
+        _field(scale, "Window scale", f"window scale {scale}"),
+    ]
+    segments = [_seg("WINDOW", [{"v": window}]), _seg("OPTIONS", [{"v": opts or "-"}]),
+                _seg("MSS", [{"v": mss}]), _seg("SCALE", [{"v": scale}])]
+    summary = f"TCP · window {window} · MSS {mss} · scale {scale} · opts {opts or 'none'}"
+    return {"fields": fields, "segments": segments, "summary": summary}
+
+
+def parse_ja4tscan(fp):
+    """Decode a JA4TScan (active TCP scan) fingerprint.
+
+    window_options_mss_windowscale_<responses> — JA4T fields plus the ordered
+    RST/retransmit response pattern observed during an active scan.
+    """
+    parts = fp.split("_")
+    if len(parts) != 5:
+        return None
+    window, opts, mss, scale, resp = parts
+    fields = [
+        _field(window, "TCP window", f"advertised window size {window}"),
+        _field(opts, "TCP options", f"option kinds in order: {opts or 'none'}"),
+        _field(mss, "MSS", f"maximum segment size {mss}"),
+        _field(scale, "Window scale", f"window scale {scale}"),
+        _field(resp, "Scan responses", f"observed retransmit / RST pattern: {resp}"),
+    ]
+    segments = [_seg("WINDOW", [{"v": window}]), _seg("OPTIONS", [{"v": opts or "-"}]),
+                _seg("MSS", [{"v": mss}]), _seg("SCALE", [{"v": scale}]),
+                _seg("RESPONSES", [{"v": resp}])]
+    summary = f"active TCP scan · window {window} · MSS {mss} · scale {scale} · responses {resp}"
+    return {"fields": fields, "segments": segments, "summary": summary}
+
+
+def parse_ja4ssh(fp):
+    """Decode a JA4SSH (SSH traffic) fingerprint: cNNsNN_cNNsNN_cNNsNN.
+
+    Sampled over a window of SSH packets. The three segments carry, in order,
+    the mode client/server payload sizes, packet counts, and TCP ACK counts.
+    """
+    parts = fp.split("_")
+    if not (2 <= len(parts) <= 3) or not all(JA4SSH_SEG_RE.match(p) for p in parts):
+        return None
+    labels = ["Payload sizes", "Packet counts", "ACK counts"]
+    meanings = ["mode client/server SSH payload length",
+                "client/server packet counts in the window",
+                "client/server TCP ACK counts in the window"]
+    fields, segments = [], []
+    for i, p in enumerate(parts):
+        cval, sval = p[1:].split("s")
+        fields.append(_field(p, labels[i], f"{meanings[i]} — client {cval}, server {sval}"))
+        segments.append(_seg(labels[i].upper(), [{"v": p}]))
+    summary = "SSH session · " + " · ".join(f"{labels[i].lower()} {parts[i]}"
+                                            for i in range(len(parts)))
+    return {"fields": fields, "segments": segments, "summary": summary}
+
+
+def parse_ja4l(fp):
+    """Decode a JA4L / JA4LS (latency / light-distance) fingerprint.
+
+    latency_ttl[_apphandshake] — one-way TCP latency (µs), observed IP TTL, and
+    (optionally) one-way application-handshake latency. TTL vs the known initial
+    TTL yields the hop count; latency yields light-distance to the peer.
+    """
+    parts = fp.split("_")
+    if len(parts) not in (2, 3) or not all(p.isdigit() for p in parts):
+        return None
+    latency, ttl = parts[0], parts[1]
+    app = parts[2] if len(parts) == 3 else None
+    fields = [
+        _field(latency, "TCP latency", f"one-way TCP latency ~{latency} µs (1 ms = 1000 µs)"),
+        _field(ttl, "Observed TTL", f"IP TTL {ttl} — vs the initial TTL gives hop count / distance"),
+    ]
+    segments = [_seg("LATENCY", [{"v": latency}]), _seg("TTL", [{"v": ttl}])]
+    if app is not None:
+        fields.append(_field(app, "App latency", f"one-way application-handshake latency ~{app} µs"))
+        segments.append(_seg("APP-LATENCY", [{"v": app}]))
+    summary = (f"latency ~{latency} µs · TTL {ttl}" + (f" · app ~{app} µs" if app else ""))
+    return {"fields": fields, "segments": segments, "summary": summary}
+
+
+def _parse_dhcp(fp, v6):
+    """Shared decoder for JA4D (DHCP) / JA4D6 (DHCPv6): msgtype_options_params."""
+    parts = fp.split("_")
+    if len(parts) != 3:
+        return None
+    a, opts, params = parts
+    proto = "DHCPv6" if v6 else "DHCP"
+    fields = [
+        _field(a, "Message type", f"{proto} message-type block (e.g. discover/solicit) + flags"),
+        _field(opts, "Options present", f"ordered {proto} option codes: {opts}"),
+        _field(params, "Requested params", f"parameter / option request list: {params}"),
+    ]
+    segments = [_seg("MSGTYPE", [{"v": a}]), _seg("OPTIONS", [{"v": opts}]),
+                _seg("PARAMS", [{"v": params}])]
+    return {"fields": fields, "segments": segments,
+            "summary": f"{proto} fingerprint · {a} · {opts.count('-') + 1} options"}
+
+
+def parse_ja4d(fp):
+    return _parse_dhcp(fp, v6=False)
+
+
+def parse_ja4d6(fp):
+    return _parse_dhcp(fp, v6=True)
+
+
+def parse_ja4x(fp):
+    """Decode a JA4X (X.509 certificate) fingerprint: issuer_subject_extensions."""
+    parts = fp.split("_")
+    if len(parts) != 3:
+        return None
+    issuer, subject, exts = parts
+    fields = [
+        _field(issuer, "Issuer RDNs", "SHA-256 of the issuer RDN set (truncated)"),
+        _field(subject, "Subject RDNs", "SHA-256 of the subject RDN set (truncated)"),
+        _field(exts, "Cert extensions", "SHA-256 of the certificate extensions (truncated)"),
+    ]
+    segments = [_seg("ISSUER", [{"v": issuer}]), _seg("SUBJECT", [{"v": subject}]),
+                _seg("EXTENSIONS", [{"v": exts}])]
+    return {"fields": fields, "segments": segments,
+            "summary": "X.509 certificate fingerprint · issuer / subject / extensions hashes"}
+
+
+TYPE_LABELS = {
+    "ja4": "JA4 · TLS Client", "ja4s": "JA4S · TLS Server",
+    "ja4h": "JA4H · HTTP Client", "ja4x": "JA4X · X.509 Certificate",
+    "ja4t": "JA4T · TCP Client", "ja4ts": "JA4TS · TCP Server",
+    "ja4tscan": "JA4TScan · Active TCP Scan", "ja4ssh": "JA4SSH · SSH Traffic",
+    "ja4l": "JA4L · Latency / Light-Distance", "ja4ls": "JA4LS · Server Latency",
+    "ja4d": "JA4D · DHCP", "ja4d6": "JA4D6 · DHCPv6",
+    "unknown": "Unrecognised fingerprint",
+}
+
+
+def signature_breakdown(fp):
+    """Normalised, template-friendly decode of any JA4+ suite fingerprint.
+
+    Returns {type, type_label, fingerprint, valid, segments, decode, summary,
+    risk} — a uniform shape the CLI and web UI render for every suite member.
+    Wildcards and unrecognised inputs return valid=False.
+    """
+    if not fp or "*" in fp:
+        return {"type": "unknown", "type_label": TYPE_LABELS["unknown"],
+                "fingerprint": fp, "valid": False,
+                "segments": [], "decode": [], "summary": "", "risk": None}
+    fp = fp.strip()
+    t = detect_ja4_type(fp)
+    risk = None
+
+    if t == "ja4":
+        p = parse_ja4(fp)
+        if not p:
+            t = "unknown"
+        else:
+            risk = p["risk"]
+            flags = {f["code"]: f["severity"] for f in risk["flags"]}
+            comp = p["components"]
+            decode = [
+                _field(comp["transport"]["code"], "Protocol", comp["transport"]["meaning"],
+                       flags.get("quic")),
+                _field(comp["tls_version"]["code"], "TLS version", comp["tls_version"]["meaning"],
+                       flags.get("legacy_tls")),
+                _field(comp["sni"]["code"], "SNI", comp["sni"]["meaning"], flags.get("no_sni_ip")),
+                _field(comp["cipher_count"]["code"], "Cipher suites", comp["cipher_count"]["meaning"]),
+                _field(comp["extension_count"]["code"], "Extensions", comp["extension_count"]["meaning"]),
+                _field(comp["alpn"]["code"], "ALPN", comp["alpn"]["meaning"], flags.get("no_alpn")),
+                _field(p["ja4_b_cipher_hash"], "Cipher hash", "SHA-256 of the sorted cipher suites (truncated)"),
+                _field(p["ja4_c_extension_hash"], "Extension hash",
+                       "SHA-256 of sorted extensions + signature algorithms (truncated)"),
+            ]
+            a = comp
+            segments = [
+                _seg("JA4_a", [
+                    {"v": a["transport"]["code"], "sev": flags.get("quic")},
+                    {"v": a["tls_version"]["code"], "sev": flags.get("legacy_tls")},
+                    {"v": a["sni"]["code"], "sev": flags.get("no_sni_ip")},
+                    {"v": a["cipher_count"]["code"]},
+                    {"v": a["extension_count"]["code"]},
+                    {"v": a["alpn"]["code"], "sev": flags.get("no_alpn")},
+                ]),
+                _seg("JA4_b", [{"v": p["ja4_b_cipher_hash"]}]),
+                _seg("JA4_c", [{"v": p["ja4_c_extension_hash"]}]),
+            ]
+            return {"type": "ja4", "type_label": TYPE_LABELS["ja4"], "fingerprint": fp,
+                    "valid": True, "segments": segments, "decode": decode,
+                    "summary": p["summary"], "risk": risk}
+
+    parser = {"ja4s": parse_ja4s, "ja4h": parse_ja4h, "ja4t": parse_ja4t,
+              "ja4ts": parse_ja4t, "ja4tscan": parse_ja4tscan, "ja4ssh": parse_ja4ssh,
+              "ja4l": parse_ja4l, "ja4ls": parse_ja4l, "ja4d": parse_ja4d,
+              "ja4d6": parse_ja4d6, "ja4x": parse_ja4x}.get(t)
+    if parser:
+        d = parser(fp)
+        if d:
+            return {"type": t, "type_label": TYPE_LABELS[t], "fingerprint": fp,
+                    "valid": True, "segments": d["segments"], "decode": d["fields"],
+                    "summary": d["summary"], "risk": None}
+
+    return {"type": "unknown", "type_label": TYPE_LABELS["unknown"], "fingerprint": fp,
+            "valid": False, "segments": [], "decode": [], "summary": "", "risk": None}
+
+
 # ----- Wildcard helpers -----
 def has_wildcard(fp):
     return "*" in fp
@@ -529,11 +890,25 @@ class VirusTotalLookup:
                 out[key] = {"error": str(e)}
         return out
 
+    # VT's behaviour_network search indexes the TLS JA4/JA4S seen during
+    # detonation. HTTP/cert/TCP suite members aren't queryable this way.
+    VT_SUPPORTED_TYPES = ("ja4", "ja4s")
+
     def lookup_ja4(self, ja4_or_pattern, enrich=True, max_enrich=5,
                    max_files=10, network_limit=10):
         if not self.is_configured():
             return {"status": "not_configured",
                     "message": "Set VIRUSTOTAL_API_KEY (or VT_API_KEY) to enable VT lookup"}
+        # Type-gate: wildcards are allowed (JA4 hunting); typed inputs must be a
+        # TLS member VT can actually search on.
+        if "*" not in ja4_or_pattern:
+            ftype = detect_ja4_type(ja4_or_pattern)
+            if ftype not in self.VT_SUPPORTED_TYPES:
+                return {"status": "unsupported_type",
+                        "query": f"behavior_network:{ja4_or_pattern}",
+                        "message": f"VirusTotal behaviour search covers JA4/JA4S "
+                                   f"(TLS); {TYPE_LABELS.get(ftype, ftype)} fingerprints "
+                                   f"aren't indexed there. JA4DB results still apply."}
         query = f"behavior_network:{ja4_or_pattern}"
         try:
             files = self.search_behavior_network(ja4_or_pattern, limit=max(max_files, 25))
@@ -899,6 +1274,12 @@ def main():
         record = {"fingerprint": fp, "is_wildcard": has_wildcard(fp)}
         if not has_wildcard(fp):
             record["parsed"] = parse_ja4(fp)
+            sig = signature_breakdown(fp)
+            record["signature"] = sig
+            if sig["valid"] and sig["type"] != "ja4":
+                print(f"\n{sig['type_label']}\n   {sig['summary']}")
+                for f in sig["decode"]:
+                    print(f"   {f['label']:<18} {f['code']}  —  {f['meaning']}")
         matches, mt = lookup.lookup(fp)
         record["ja4db"] = {"match_type": mt, "match_count":
                            (len(matches) if isinstance(matches, list)
@@ -947,12 +1328,12 @@ def main():
                 run_one(fp)
     elif args.fingerprint:
         if args.parse:
-            parsed = parse_ja4(args.fingerprint)
-            if parsed:
-                print(json.dumps(parsed, indent=2))
+            sig = signature_breakdown(args.fingerprint)
+            if sig["valid"]:
+                print(json.dumps(sig, indent=2))
             else:
-                print("[!] Cannot parse — fingerprint contains wildcards or is malformed",
-                      file=sys.stderr)
+                print("[!] Cannot parse — fingerprint contains wildcards or is "
+                      "an unrecognised JA4+ format", file=sys.stderr)
         run_one(args.fingerprint)
     else:
         p.print_help()

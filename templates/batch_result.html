@@ -4,194 +4,56 @@
 
 {% block extra_css %}
 <style>
-    .summary-box {
-        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-        padding: 20px;
-        border-radius: 8px;
-        margin-bottom: 30px;
-        border: 1px solid #bae6fd;
-    }
+    .summary-box { background: var(--bg-0); padding: 22px 24px; border-radius: 14px; margin-bottom: 24px; border: 1px solid var(--line-2); }
+    .summary-box h2 { color: var(--text); margin-bottom: 14px; }
+    .summary-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-top: 14px; }
+    .stat-item { background: var(--panel); padding: 16px; border-radius: 10px; text-align: center; border: 1px solid var(--line-2); }
+    .stat-value { font-family: var(--mono); font-size: 30px; font-weight: 600; color: var(--accent); }
+    .stat-label { font-size: 12px; color: var(--muted-2); margin-top: 5px; letter-spacing: .04em; }
 
-    .summary-box h2 {
-        color: #0c4a6e;
-        margin-bottom: 15px;
-    }
+    .result-item { background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px; padding: 18px 20px; margin-bottom: 12px; }
+    .result-item-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+    .fingerprint-code { font-family: var(--mono); font-size: 14px; color: var(--accent); word-break: break-all; flex: 1; }
 
-    .summary-stats {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 15px;
-        margin-top: 15px;
-    }
+    .status-badge { display: inline-block; padding: 5px 11px; border-radius: 999px; font-family: var(--mono); font-weight: 600; font-size: 11px; white-space: nowrap; border: 1px solid; }
+    .status-exact, .status-found { background: var(--good-bg); color: var(--good); border-color: var(--good-bd); }
+    .status-near     { background: var(--accent-wash); color: var(--accent); border-color: var(--accent-bd); }
+    .status-wildcard { background: rgba(139,120,255,.12); color: #b4a6ff; border-color: rgba(139,120,255,.35); }
+    .status-partial  { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-bd); }
+    .status-not-found { background: var(--bad-bg); color: #f2a3a8; border-color: var(--bad-bd); }
 
-    .stat-item {
-        background: white;
-        padding: 15px;
-        border-radius: 5px;
-        text-align: center;
-        border: 1px solid #e0e0e0;
-    }
+    .app-list { display: flex; flex-wrap: wrap; gap: 10px; }
+    .app-tag { background: var(--panel-2); color: var(--text-2); padding: 8px 12px; border-radius: 8px; font-size: 13.5px; border: 1px solid var(--line-2); }
+    .app-tag.verified { background: var(--good-bg); color: var(--good); border-color: var(--good-bd); }
 
-    .stat-value {
-        font-size: 2em;
-        font-weight: bold;
-        color: #3b82f6;
-    }
+    .not-found-message { color: var(--muted); font-size: 14px; }
 
-    .stat-label {
-        font-size: 0.9em;
-        color: #6b7280;
-        margin-top: 5px;
-    }
+    .errors-box { background: var(--bad-bg); border: 1px solid var(--bad-bd); border-left-width: 3px; padding: 14px 16px; border-radius: 10px; margin-bottom: 20px; }
+    .errors-box h3 { color: #f2a3a8; margin-bottom: 8px; }
+    .errors-box ul { margin-left: 20px; color: var(--text-2); }
 
-    .result-item {
-        background: white;
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        padding: 20px;
-        margin-bottom: 15px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
+    .timestamp { color: var(--muted-3); font-family: var(--mono); font-size: 11px; margin-top: 20px; text-align: center; }
+    .actions { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); display: flex; gap: 10px; flex-wrap: wrap; }
 
-    .result-item-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 15px;
-        padding-bottom: 10px;
-        border-bottom: 2px solid #f3f4f6;
-    }
+    .filter-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--panel); padding: 12px 15px; border-radius: 10px; margin-bottom: 18px; border: 1px solid var(--line-2); font-size: 13px; color: var(--muted); }
+    .filter-btn { font-family: var(--mono); padding: 7px 13px; border: 1px solid var(--line-3); background: transparent; color: var(--muted); border-radius: 8px; cursor: pointer; font-size: 12.5px; }
+    .filter-btn:hover { color: var(--text); }
+    .filter-btn.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 
-    .fingerprint-code {
-        font-family: 'Courier New', monospace;
-        font-size: 14px;
-        color: #1f2937;
-        word-break: break-all;
-        flex: 1;
-        margin-right: 15px;
-    }
-
-    .status-badge {
-        display: inline-block;
-        padding: 6px 12px;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 12px;
-        white-space: nowrap;
-    }
-
-    .status-exact, .status-found { background: #d1fae5; color: #065f46; }
-    .status-near    { background: #dbeafe; color: #1e3a8a; }
-    .status-wildcard{ background: #ede9fe; color: #5b21b6; }
-    .status-partial { background: #fef3c7; color: #92400e; }
-    .status-not-found { background: #fee2e2; color: #991b1b; }
-    .status-error  { background: #fef3c7; color: #92400e; }
-
-    .app-list {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-    }
-
-    .app-tag {
-        background: #eff6ff;
-        color: #1e40af;
-        padding: 8px 12px;
-        border-radius: 5px;
-        font-size: 14px;
-        border: 1px solid #bfdbfe;
-    }
-
-    .app-tag.verified {
-        background: #d1fae5;
-        color: #065f46;
-        border-color: #86efac;
-    }
-
-    .not-found-message {
-        color: #991b1b;
-        font-size: 14px;
-    }
-
-    .error-message {
-        color: #92400e;
-        font-size: 14px;
-    }
-
-    .errors-box {
-        background: #fee2e2;
-        border-left: 4px solid #dc2626;
-        padding: 15px;
-        border-radius: 5px;
-        margin-bottom: 20px;
-    }
-
-    .errors-box h3 {
-        color: #991b1b;
-        margin-bottom: 10px;
-    }
-
-    .errors-box ul {
-        margin-left: 20px;
-        color: #7f1d1d;
-    }
-
-    .timestamp {
-        color: #9ca3af;
-        font-size: 14px;
-        margin-top: 20px;
-        text-align: center;
-    }
-
-    .actions {
-        margin-top: 30px;
-        padding-top: 20px;
-        border-top: 2px solid #e5e7eb;
-        display: flex;
-        gap: 10px;
-    }
-
-    .export-btn {
-        background: #6b7280;
-    }
-
-    .export-btn:hover {
-        background: #4b5563;
-    }
-
-    .filter-bar {
-        background: #f9fafb;
-        padding: 15px;
-        border-radius: 5px;
-        margin-bottom: 20px;
-        border: 1px solid #e5e7eb;
-    }
-
-    .filter-btn {
-        padding: 8px 16px;
-        margin-right: 10px;
-        border: 1px solid #d1d5db;
-        background: white;
-        border-radius: 5px;
-        cursor: pointer;
-        font-size: 14px;
-    }
-
-    .filter-btn.active {
-        background: #3b82f6;
-        color: white;
-        border-color: #3b82f6;
-    }
-
-    .hidden {
-        display: none;
-    }
+    .hidden { display: none; }
 </style>
 {% endblock %}
 
 {% block content %}
+<form class="relookup" method="POST" action="/lookup" autocomplete="off">
+    <span class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
+    <input type="text" name="fingerprint" placeholder="Look up a single fingerprint…" spellcheck="false" required aria-label="Look up a fingerprint">
+    <input type="hidden" name="enrich_vt" value="on">
+    <button type="submit" class="btn">Lookup</button>
+</form>
+
 <div class="summary-box">
-    <h2>📊 Batch Lookup Results</h2>
+    <h2>Batch lookup results</h2>
     <div class="summary-stats">
         <div class="stat-item">
             <div class="stat-value">{{ total }}</div>
@@ -280,8 +142,8 @@
 </div>
 
 <div class="actions">
-    <a href="/" class="btn">← New Lookup</a>
-    <button class="btn export-btn" onclick="exportResults()">Export as JSON</button>
+    <a href="/" class="btn btn-ghost">← New lookup</a>
+    <button class="btn" onclick="exportResults()">⬇ Export JSON</button>
 </div>
 
 <script>

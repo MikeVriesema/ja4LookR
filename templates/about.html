@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}JA4LookR — About{% endblock %}
+
+{% block extra_css %}
+<style>
+    .spec-hero { margin-bottom: 26px; }
+    .spec-hero .eyebrow { color: var(--accent); letter-spacing: .2em; }
+    .spec-hero h1 { margin: 12px 0 10px; font-size: 30px; font-weight: 700; letter-spacing: -.02em; color: var(--text); }
+    .spec-hero p { font-size: 15px; color: var(--muted); max-width: 760px; }
+    .spec-hero a { border-bottom: 1px solid var(--accent-bd); }
+
+    .credit {
+        display: flex; gap: 12px; align-items: baseline; margin-top: 18px;
+        background: var(--bg-0); border: 1px solid var(--line-2); border-left: 3px solid var(--accent);
+        border-radius: 10px; padding: 14px 18px; font-size: 13.5px; color: var(--text-2);
+    }
+    .credit .tag { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); flex-shrink: 0; }
+
+    .how { margin: 30px 0; }
+    .how h2, .suite-h2 { font-family: var(--mono); font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 0 0 16px; }
+    .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+    .step { background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px; padding: 16px 18px; }
+    .step .n { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--accent-ink); background: var(--accent); width: 24px; height: 24px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 10px; }
+    .step h3 { font-size: 14px; color: var(--text); margin: 0 0 5px; }
+    .step p { font-size: 13px; color: var(--muted); margin: 0; }
+
+    .member { background: var(--panel); border: 1px solid var(--line-2); border-radius: 14px; padding: 20px 22px; margin-bottom: 16px; }
+    .member-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+    .member-short { font-family: var(--mono); font-weight: 600; font-size: 18px; color: var(--accent); }
+    .member-full { font-family: var(--mono); font-size: 12px; color: var(--muted-3); }
+    .member-desc { font-size: 14px; color: var(--text-2); margin-bottom: 14px; }
+    .member-img {
+        display: block; width: 100%; height: auto; border-radius: 10px;
+        border: 1px solid var(--line-2); background: #05070a; margin-bottom: 14px;
+    }
+    .ex-form { display: inline-block; }
+    .ex-chip {
+        font-family: var(--mono); font-size: 12.5px; color: var(--text-2); background: var(--panel-2);
+        border: 1px solid var(--line-3); border-radius: 8px; padding: 8px 12px; cursor: pointer; transition: .15s;
+    }
+    .ex-chip:hover { border-color: var(--accent-bd); color: var(--accent); }
+    .ex-label { font-size: 12px; color: var(--muted-3); margin-right: 8px; }
+    .ex-none { font-size: 12.5px; color: var(--muted-3); font-style: italic; }
+
+    .ref { margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+    .ref a { border-bottom: 1px solid var(--accent-bd); }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="spec-hero">
+    <div class="eyebrow">JA4+ Network Fingerprinting Suite</div>
+    <h1>The JA4+ signature suite</h1>
+    <p><strong>JA4+</strong> is a suite of network fingerprinting standards created and maintained by
+        <a href="https://foxio.io" target="_blank" rel="noopener">FoxIO</a>. Each method distils a
+        protocol handshake into a short, human- and machine-readable fingerprint for threat hunting,
+        detection engineering, and attribution. JA4LookR decodes and looks up these fingerprints
+        entirely offline against a bundled JA4DB snapshot.</p>
+
+    <div class="credit">
+        <span class="tag">Credit</span>
+        <span>The JA4+ standard, the reference diagrams below, and the JA4 database are the work of
+            <strong>FoxIO</strong> (BSD 3-Clause / patent-pending). JA4LookR is an independent offline
+            companion tool — all credit for the fingerprinting methods goes to FoxIO. See the
+            <a href="https://github.com/FoxIO-LLC/ja4" target="_blank" rel="noopener">FoxIO-LLC/ja4</a> repository.</span>
+    </div>
+</section>
+
+<section class="how">
+    <h2>How JA4LookR works</h2>
+    <div class="steps">
+        <div class="step"><span class="n">1</span><h3>Detect the type</h3><p>The input is auto-classified into its JA4+ member — JA4, JA4S, JA4H, JA4X, JA4T, JA4TScan, JA4SSH, JA4D/JA4D6 — from its structure.</p></div>
+        <div class="step"><span class="n">2</span><h3>Decode the signature</h3><p>Each segment is broken out and labelled: protocol, TLS version, SNI, ciphers, extensions, ALPN, hashes, and per-type fields.</p></div>
+        <div class="step"><span class="n">3</span><h3>Match &amp; score</h3><p>The fingerprint is matched against the offline JA4DB (exact / near / cipher-variant / wildcard), and JA4 clients are risk-scored for C2 indicators.</p></div>
+        <div class="step"><span class="n">4</span><h3>Pivot &amp; export</h3><p>Optionally pivot JA4/JA4S through VirusTotal, generate a YARA hunting rule, and export the full result as JSON.</p></div>
+    </div>
+</section>
+
+<section>
+    <h2 class="suite-h2">Suite members &amp; formats</h2>
+    {% for full, short, desc, img, example in suite %}
+    <div class="member" id="{{ short|lower }}">
+        <div class="member-head">
+            <span class="member-short">{{ short }}</span>
+            <span class="member-full">{{ full }}</span>
+        </div>
+        <div class="member-desc">{{ desc }}</div>
+        <img class="member-img" src="{{ url_for('assets', filename=img) }}" alt="{{ short }} format diagram by FoxIO" loading="lazy">
+        {% if example %}
+        <form class="ex-form" method="POST" action="/lookup">
+            <input type="hidden" name="fingerprint" value="{{ example }}">
+            <input type="hidden" name="enrich_vt" value="on">
+            <span class="ex-label">Try it:</span>
+            <button type="submit" class="ex-chip">{{ short }}={{ example }}</button>
+        </form>
+        {% else %}
+        <span class="ex-none">Timing-based method — decoded when a live capture is provided.</span>
+        {% endif %}
+    </div>
+    {% endfor %}
+</section>
+
+<div class="ref">
+    Full technical details, source code, Wireshark/Zeek plugins, and the live database:
+    <a href="https://github.com/FoxIO-LLC/ja4" target="_blank" rel="noopener">github.com/FoxIO-LLC/ja4</a>
+    · <a href="https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/README.md" target="_blank" rel="noopener">technical details</a>
+    · <a href="https://ja4db.foxio.io" target="_blank" rel="noopener">JA4DB</a>
+</div>
+{% endblock %}

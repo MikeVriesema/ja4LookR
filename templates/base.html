@@ -4,183 +4,230 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}JA4LookR{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        :root {
+            --page:    #06090d;
+            --frame:   #0a0e13;
+            --bg-0:    #0c1219;
+            --panel:   #0f1620;
+            --panel-2: #101821;
+            --elev:    #131c26;
+            --line:    #18202b;
+            --line-2:  #1c2734;
+            --line-3:  #26323f;
+            --accent:      #34d3c4;
+            --accent-dim:  #1b9fb3;
+            --accent-ink:  #04231f;
+            --accent-wash: rgba(52,211,196,.10);
+            --accent-bd:   rgba(52,211,196,.40);
+            --text:    #f2f5f8;
+            --text-2:  #c3ccd6;
+            --muted:   #8a94a3;
+            --muted-2: #6c7686;
+            --muted-3: #5c6673;
+            --dim:     #3a4553;
+            --good:    #5ddc95;  --good-bg: rgba(75,213,137,.12);  --good-bd: rgba(75,213,137,.35);
+            --warn:    #f0a35e;  --warn-bg: rgba(240,163,94,.12);  --warn-bd: rgba(240,163,94,.35);
+            --bad:     #f0616a;  --bad-bg:  rgba(240,97,106,.12);  --bad-bd:  rgba(240,97,106,.38);
+            --sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --mono: 'IBM Plex Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
         }
-
+        * { box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            font-family: var(--sans);
+            color: var(--text-2);
+            background:
+                radial-gradient(1100px 500px at 50% -8%, rgba(52,211,196,.06), transparent 70%),
+                var(--page);
             min-height: 100vh;
-            padding: 20px;
+            padding: 30px 22px 48px;
+            -webkit-font-smoothing: antialiased;
+            line-height: 1.6;
         }
+        ::selection { background: rgba(52,211,196,.3); color: #fff; }
+        a { color: var(--accent); text-decoration: none; }
+        @keyframes ja4pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
 
-        .container {
-            max-width: 1200px;
+        .frame {
+            max-width: 1180px;
             margin: 0 auto;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            background: var(--frame);
+            border: 1px solid var(--line-2);
+            border-radius: 16px;
             overflow: hidden;
+            box-shadow: 0 30px 80px -40px rgba(0,0,0,.8);
+        }
+        .frame-strip { height: 3px; background: linear-gradient(90deg,var(--accent),var(--accent-dim) 60%,transparent); }
+
+        /* ---- Top menu bar ---- */
+        .topbar {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 20px; padding: 15px 26px; border-bottom: 1px solid var(--line);
+            flex-wrap: wrap;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 26px; }
+        .brand { display: flex; align-items: center; gap: 10px; }
+        .brand .logo { display: inline-flex; color: var(--accent); }
+        .brand .wordmark {
+            font-family: var(--mono); font-weight: 600; font-size: 18px;
+            color: #eef2f6; letter-spacing: -.01em;
+        }
+        .brand .wordmark b { color: var(--accent); font-weight: 600; }
+        .topnav { display: flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 12.5px; letter-spacing: .04em; }
+        .topnav a {
+            padding: 7px 13px; border-radius: 7px; color: var(--muted); transition: background .15s, color .15s;
+        }
+        .topnav a:hover { color: var(--text); background: rgba(255,255,255,.03); }
+        .topnav a.active { color: var(--accent-ink); background: var(--accent); font-weight: 600; }
+        .status-pill {
+            display: inline-flex; align-items: center; gap: 8px;
+            font-family: var(--mono); font-size: 11.5px; color: var(--muted-2);
+            padding: 6px 11px; border: 1px solid #223040; border-radius: 999px;
+        }
+        .status-pill .dot {
+            width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+            box-shadow: 0 0 0 3px rgba(52,211,196,.18); animation: ja4pulse 2.4s ease-in-out infinite;
         }
 
-        header {
-            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
+        /* ---- Enterprise-access advisory ---- */
+        .db-notice {
+            display: flex; gap: 11px; align-items: baseline;
+            padding: 10px 26px; background: var(--bg-0);
+            border-bottom: 1px solid var(--line);
+            font-size: 12.5px; color: var(--muted);
         }
+        .db-notice .tag {
+            font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .14em;
+            text-transform: uppercase; color: var(--warn); flex-shrink: 0;
+        }
+        .db-notice a { border-bottom: 1px solid var(--accent-bd); }
 
-        header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
-        }
+        .content { padding: 30px 30px 40px; }
 
-        header p {
-            font-size: 1.1em;
-            opacity: 0.9;
-        }
-
-        .content {
-            padding: 40px;
-        }
-
-        .flash-messages {
-            margin-bottom: 20px;
-        }
-
-        .flash {
-            padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 10px;
-        }
-
-        .flash.error {
-            background: #fee;
-            border-left: 4px solid #c33;
-            color: #c33;
-        }
-
-        .flash.success {
-            background: #efe;
-            border-left: 4px solid #3c3;
-            color: #3c3;
-        }
-
-        .nav {
-            background: #f8f9fa;
-            padding: 15px 30px;
-            border-bottom: 1px solid #e0e0e0;
-        }
-
-        .nav a {
-            color: #3b82f6;
-            text-decoration: none;
-            margin-right: 20px;
-            font-weight: 500;
-        }
-
-        .nav a:hover {
-            text-decoration: underline;
-        }
+        .flash { padding: 12px 15px; border-radius: 8px; margin-bottom: 12px; font-size: 14px; border: 1px solid; }
+        .flash.error   { background: var(--bad-bg);  border-color: var(--bad-bd);  color: #f2a3a8; }
+        .flash.success { background: var(--good-bg); border-color: var(--good-bd); color: var(--good); }
 
         footer {
-            background: #f8f9fa;
-            padding: 20px;
-            text-align: center;
-            color: #666;
-            border-top: 1px solid #e0e0e0;
+            display: flex; align-items: center; justify-content: space-between; gap: 12px;
+            padding: 16px 26px; border-top: 1px solid var(--line);
+            font-family: var(--mono); font-size: 11px; letter-spacing: .05em; color: var(--muted-3); flex-wrap: wrap;
         }
+        footer a { color: var(--muted-2); }
+        footer a:hover { color: var(--accent); }
 
-        footer a {
-            color: #3b82f6;
-            text-decoration: none;
-        }
-
-        footer a:hover {
-            text-decoration: underline;
-        }
-
+        /* ---- Shared controls ---- */
         .btn {
-            display: inline-block;
-            padding: 12px 24px;
-            background: #3b82f6;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-            font-weight: 500;
-            transition: background 0.3s;
+            display: inline-flex; align-items: center; gap: 8px; justify-content: center;
+            font-family: var(--sans); font-size: 14px; font-weight: 600;
+            padding: 11px 20px; background: var(--accent); color: var(--accent-ink);
+            border: 1px solid var(--accent); border-radius: 9px; cursor: pointer;
+            transition: filter .15s; text-decoration: none;
+        }
+        .btn:hover { filter: brightness(1.08); }
+        .btn-ghost {
+            background: transparent; color: var(--text-2); border-color: var(--line-3);
+        }
+        .btn-ghost:hover { color: var(--accent); border-color: var(--accent-bd); background: rgba(52,211,196,.05); filter: none; }
+
+        input[type="text"], textarea, select {
+            width: 100%; font-family: var(--mono); font-size: 14px; padding: 11px 13px;
+            color: var(--text); background: var(--panel-2);
+            border: 1px solid var(--line-3); border-radius: 10px;
+            transition: border-color .15s, box-shadow .15s;
+        }
+        input[type="text"]::placeholder, textarea::placeholder { color: var(--muted-3); }
+        input[type="text"]:focus, textarea:focus, select:focus {
+            outline: none; border-color: var(--accent-bd);
+            box-shadow: 0 0 0 4px rgba(52,211,196,.08);
+        }
+        select { cursor: pointer; }
+        option { background: var(--panel); }
+        label { display: block; margin-bottom: 8px; font-size: 13.5px; font-weight: 600; color: var(--text-2); }
+        .form-group { margin-bottom: 20px; }
+        code { font-family: var(--mono); }
+
+        .eyebrow {
+            font-family: var(--mono); font-size: 11px; letter-spacing: .16em;
+            text-transform: uppercase; color: var(--muted-2);
         }
 
-        .btn:hover {
-            background: #2563eb;
+        /* Generic content styles shared by the simpler result pages */
+        .content h2 { color: var(--text); font-size: 22px; font-weight: 700; letter-spacing: -.01em; margin: 0 0 6px; }
+        .content h3 { color: var(--text); font-size: 16px; margin: 0 0 10px; }
+        .content p { color: var(--muted); }
+        .content table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
+        .content thead th {
+            text-align: left; padding: 10px 12px; font-family: var(--mono); font-size: 11px;
+            letter-spacing: .08em; text-transform: uppercase; color: var(--muted-2);
+            border-bottom: 1px solid var(--line-3);
         }
-
-        .btn-secondary {
-            background: #6b7280;
+        .content tbody td { padding: 10px 12px; border-bottom: 1px solid var(--line); color: var(--text-2); }
+        .content tbody tr:hover td { background: rgba(255,255,255,.02); }
+        .mono, .content td.mono { font-family: var(--mono); }
+        .card {
+            background: var(--panel); border: 1px solid var(--line-2);
+            border-radius: 12px; padding: 20px 22px; margin-bottom: 14px;
         }
+        .count-line { font-family: var(--mono); font-size: 12.5px; color: var(--muted-2); margin: 4px 0 2px; }
 
-        .btn-secondary:hover {
-            background: #4b5563;
+        /* Shared re-lookup bar (result + batch pages) */
+        .relookup {
+            display: flex; align-items: center; gap: 10px; margin-bottom: 20px;
+            background: var(--panel-2); border: 1px solid var(--line-3);
+            border-radius: 12px; padding: 8px 8px 8px 15px;
         }
+        .relookup:focus-within { border-color: var(--accent-bd); box-shadow: 0 0 0 4px rgba(52,211,196,.06); }
+        .relookup .ico { display: inline-flex; color: var(--muted-2); flex-shrink: 0; }
+        .relookup input[type=text] { flex: 1; background: transparent; border: none; box-shadow: none; padding: 8px 2px; font-size: 15px; }
+        .relookup input[type=text]:focus { outline: none; border: none; box-shadow: none; }
+        .relookup .btn { padding: 10px 18px; white-space: nowrap; }
 
-        input[type="text"],
-        textarea {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 5px;
-            font-size: 16px;
-            transition: border-color 0.3s;
-        }
-
-        input[type="text"]:focus,
-        textarea:focus {
-            outline: none;
-            border-color: #3b82f6;
-        }
-
-        label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 500;
-            color: #374151;
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        @media (max-width: 768px) {
-            header h1 {
-                font-size: 1.8em;
-            }
-
-            .content {
-                padding: 20px;
-            }
+        @media (max-width: 760px) {
+            body { padding: 14px 10px 30px; }
+            .topbar { padding: 14px 16px; gap: 14px; }
+            .topbar-left { gap: 16px; }
+            .status-pill { display: none; }
+            .db-notice { padding: 10px 16px; }
+            .content { padding: 22px 16px 30px; }
         }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🔍 JA4LookR</h1>
-            <p>Secure JA4 Fingerprint Lookup Tool</p>
-        </header>
+    <div class="frame">
+        <div class="frame-strip"></div>
 
-        <div class="nav">
-            <a href="/">Home</a>
-            <a href="https://ja4db.com" target="_blank">JA4DB</a>
-            <a href="https://github.com/FoxIO-LLC/ja4" target="_blank">About JA4</a>
+        <div class="topbar">
+            <div class="topbar-left">
+                <div class="brand">
+                    <span class="logo" aria-hidden="true">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                    </span>
+                    <span class="wordmark"><b>ja4</b>lookr</span>
+                </div>
+                <nav class="topnav">
+                    <a href="/" class="{{ 'active' if nav_active == 'lookup' else '' }}">Lookup</a>
+                    <a href="/about" class="{{ 'active' if nav_active == 'about' else '' }}">About</a>
+                    <a href="https://ja4db.foxio.io" target="_blank" rel="noopener">JA4DB</a>
+                </nav>
+            </div>
+            <div class="status-pill">
+                <span class="dot"></span>
+                offline · local JA4DB snapshot
+            </div>
+        </div>
+
+        <div class="db-notice">
+            <span class="tag">Notice</span>
+            <span>Live JA4DB lookups now require a <strong>FoxIO account</strong> (register a work
+                email at <a href="https://ja4db.foxio.io" target="_blank" rel="noopener">ja4db.foxio.io</a>);
+                full database exports are limited to <strong>enterprise plans</strong>.
+                JA4LookR runs offline against a bundled/legacy snapshot — no account needed.</span>
         </div>
 
         <div class="content">
@@ -198,10 +245,8 @@
         </div>
 
         <footer>
-            <p>JA4LookR - Powered by <a href="https://ja4db.com" target="_blank">JA4DB</a></p>
-            <p style="margin-top: 10px; font-size: 0.9em;">
-                Results are cached for 7 days. CLI version available for power users.
-            </p>
+            <span>JA4LOOKR · JA4+ FINGERPRINT ANALYSIS</span>
+            <span>JA4+ standard by <a href="https://github.com/FoxIO-LLC/ja4" target="_blank" rel="noopener">FoxIO</a></span>
         </footer>
     </div>
 </body>

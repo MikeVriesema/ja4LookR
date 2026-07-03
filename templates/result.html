@@ -1,446 +1,352 @@
 {% extends "base.html" %}
 
-{% block title %}JA4LookR - Result{% endblock %}
+{% block title %}JA4LookR — {{ result.fingerprint }}{% endblock %}
 
 {% block extra_css %}
 <style>
-    .result-header {
-        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-        padding: 20px;
-        border-radius: 8px;
-        margin-bottom: 30px;
-        border: 1px solid #bae6fd;
+    /* ---- re-lookup bar ---- */
+    .relookup {
+        display:flex; align-items:center; gap:10px; margin-bottom:16px;
+        background:var(--panel-2); border:1px solid var(--line-3); border-radius:12px; padding:8px 8px 8px 15px;
     }
-    .result-header h2 { color: #0c4a6e; margin-bottom: 10px; }
+    .relookup:focus-within { border-color:var(--accent-bd); box-shadow:0 0 0 4px rgba(52,211,196,.06); }
+    .relookup .ico { display:inline-flex; color:var(--muted-2); flex-shrink:0; }
+    .relookup input[type=text] { flex:1; background:transparent; border:none; box-shadow:none; padding:8px 2px; font-size:15px; }
+    .relookup input[type=text]:focus { outline:none; border:none; box-shadow:none; }
+    .relookup .btn { padding:10px 18px; white-space:nowrap; }
 
-    .fingerprint-display {
-        font-family: 'Courier New', monospace;
-        background: white;
-        padding: 15px;
-        border-radius: 5px;
-        word-break: break-all;
-        border: 1px solid #e0e0e0;
-        margin-top: 10px;
+    /* ---- type chip + verdict row ---- */
+    .q-row { display:flex; align-items:center; gap:12px; margin-bottom:22px; flex-wrap:wrap; }
+    .type-chip {
+        display:inline-flex; align-items:center; gap:8px; font-family:var(--mono); font-weight:600;
+        font-size:13px; letter-spacing:.03em; padding:9px 15px; border-radius:10px;
+        background:var(--accent-wash); border:1px solid var(--accent-bd); color:var(--accent);
     }
-
-    .status-badge {
-        display: inline-block;
-        padding: 6px 12px;
-        border-radius: 20px;
-        font-weight: 600;
-        font-size: 14px;
-        margin-top: 10px;
+    .type-chip .tt { font-size:11px; color:var(--muted-2); font-weight:500; letter-spacing:.1em; }
+    .type-chip.type-unknown { background:rgba(255,255,255,.03); border-color:var(--line-3); color:var(--muted); }
+    .verdict {
+        display:inline-flex; align-items:center; gap:8px; border-radius:10px;
+        padding:12px 16px; font-size:14px; font-weight:600; white-space:nowrap; border:1px solid;
     }
-    .status-exact, .status-found { background: #d1fae5; color: #065f46; }
-    .status-near { background: #dbeafe; color: #1e3a8a; }
-    .status-wildcard { background: #ede9fe; color: #5b21b6; }
-    .status-partial { background: #fef3c7; color: #92400e; }
-    .status-cipher_variant { background: #fae8ff; color: #86198f; }
-    .status-not-found { background: #fee2e2; color: #991b1b; }
-    .status-error { background: #fef3c7; color: #92400e; }
+    .verdict-found   { background:var(--good-bg); border-color:var(--good-bd); color:var(--good); }
+    .verdict-partial { background:var(--warn-bg); border-color:var(--warn-bd); color:var(--warn); }
+    .verdict-none    { background:var(--bad-bg);  border-color:var(--bad-bd);  color:#f2a3a8; }
 
-    .risk-panel { margin-top: 18px; padding: 14px 16px; border-radius: 6px; border-left: 5px solid; }
-    .risk-panel ul { margin: 8px 0 0 18px; }
-    .risk-none { background: #f0fdf4; border-left-color: #22c55e; }
-    .risk-low { background: #fefce8; border-left-color: #eab308; }
-    .risk-medium { background: #fff7ed; border-left-color: #f97316; }
-    .risk-high { background: #fef2f2; border-left-color: #ef4444; }
+    /* ---- signature card + segment strip ---- */
+    .sig-card { background:var(--bg-0); border:1px solid var(--line-2); border-radius:14px; padding:22px 24px; margin-bottom:22px; }
+    .sig-head { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:18px; flex-wrap:wrap; }
+    .sig-type { font-family:var(--mono); font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); }
+    .risk-badge { display:inline-flex; align-items:center; gap:8px; font-family:var(--mono); font-size:12px; font-weight:600; padding:6px 12px; border-radius:999px; border:1px solid; }
+    .risk-badge.sev-none { color:var(--good); border-color:var(--good-bd); background:var(--good-bg); }
+    .risk-badge.sev-low  { color:#e6c84f; border-color:rgba(230,200,79,.35); background:rgba(230,200,79,.1); }
+    .risk-badge.sev-medium { color:var(--warn); border-color:var(--warn-bd); background:var(--warn-bg); }
+    .risk-badge.sev-high { color:var(--bad); border-color:var(--bad-bd); background:var(--bad-bg); }
 
-    .result-card {
-        background: white;
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        padding: 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    .seg-strip { display:flex; align-items:flex-end; gap:8px; flex-wrap:wrap; }
+    .seg-group { display:flex; flex-direction:column; align-items:center; gap:9px; }
+    .seg-row { display:flex; gap:5px; }
+    .seg {
+        font-family:var(--mono); font-weight:600; font-size:19px; color:var(--text);
+        background:var(--elev); border:1px solid var(--line-3); border-radius:8px;
+        padding:9px 12px; min-width:42px; text-align:center;
     }
-    .result-card h3 {
-        color: #1f2937;
-        margin-bottom: 15px;
-        padding-bottom: 10px;
-        border-bottom: 2px solid #e5e7eb;
-    }
+    .seg.seg-hash { padding:9px 15px; }
+    .seg.sev-info   { color:var(--accent); background:var(--accent-wash); border-color:var(--accent-bd); }
+    .seg.sev-low    { color:#e6c84f; background:rgba(230,200,79,.1); border-color:rgba(230,200,79,.4); }
+    .seg.sev-medium { color:var(--warn); background:var(--warn-bg); border-color:var(--warn-bd); }
+    .seg.sev-high   { color:var(--bad); background:var(--bad-bg); border-color:var(--bad-bd); }
+    .seg-sep { font-family:var(--mono); font-size:22px; color:var(--dim); padding-bottom:24px; }
+    .seg-cap { font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted-3); }
+    .sig-summary { margin-top:20px; padding-top:16px; border-top:1px solid var(--line); font-size:13.5px; color:var(--muted); }
+    .sig-summary b { color:var(--text-2); font-weight:600; }
 
-    .detail-row { display: flex; padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
-    .detail-row:last-child { border-bottom: none; }
-    .detail-label { font-weight: 600; color: #6b7280; min-width: 180px; }
-    .detail-value { color: #1f2937; flex: 1; word-break: break-word; }
+    /* ---- split panes ---- */
+    .split { display:grid; grid-template-columns:1fr 360px; gap:18px; margin-bottom:22px; align-items:start; }
+    @media (max-width:900px){ .split { grid-template-columns:1fr; } }
 
-    .verified-badge { display: inline-block; padding: 3px 8px; border-radius: 3px; font-size: 12px; font-weight: 600; margin-left: 8px; }
-    .verified-yes { background: #d1fae5; color: #065f46; }
-    .verified-no { background: #f3f4f6; color: #6b7280; }
+    .pane { background:var(--panel); border:1px solid var(--line-2); border-radius:14px; padding:20px 22px; }
+    .pane-label { font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted-2); margin-bottom:14px; }
 
-    .warning-box { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 20px; border-radius: 5px; margin-bottom: 20px; }
-    .warning-box h3 { color: #92400e; margin-bottom: 10px; }
-    .warning-box ul { margin-left: 20px; color: #78350f; }
+    .dec-row { display:flex; align-items:center; gap:14px; padding:12px 0; border-bottom:1px solid var(--line); }
+    .dec-row:last-child { border-bottom:none; }
+    .dec-code { font-family:var(--mono); font-weight:600; font-size:15px; color:var(--text); width:104px; flex-shrink:0; word-break:break-all; }
+    .dec-label { font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted-2); width:132px; flex-shrink:0; }
+    .dec-mean { font-size:13.5px; color:var(--text-2); }
+    .dec-row.sev-medium .dec-code, .dec-row.sev-high .dec-code { color:var(--warn); }
+    .dec-row.sev-high .dec-code { color:var(--bad); }
 
-    .summary-line { font-family: 'Courier New', monospace; background: #f9fafb; padding: 10px; border-radius: 5px; font-size: 14px; }
+    .side-card + .side-card { margin-top:16px; }
+    .risk-card.sev-none { border-color:var(--good-bd); }
+    .risk-card.sev-medium { border-color:var(--warn-bd); }
+    .risk-card.sev-high { border-color:var(--bad-bd); }
+    .risk-flags { list-style:none; padding:0; margin:12px 0 0; }
+    .risk-flags li { padding:10px 0; border-top:1px solid var(--line); font-size:13px; color:var(--muted); }
+    .risk-flags li b { color:var(--text-2); }
+    .risk-none-note { font-size:13px; color:var(--muted); margin-top:8px; }
 
-    .actions { margin-top: 30px; padding-top: 20px; border-top: 2px solid #e5e7eb; display: flex; gap: 10px; flex-wrap: wrap; }
-    .timestamp { color: #9ca3af; font-size: 14px; margin-top: 20px; text-align: center; }
-    .entry-separator { border-top: 2px solid #e5e7eb; margin: 20px 0; }
+    .attr-row { display:flex; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); font-size:13.5px; }
+    .attr-row:last-child { border-bottom:none; }
+    .attr-k { color:var(--muted-2); width:104px; flex-shrink:0; }
+    .attr-v { color:var(--text-2); flex:1; word-break:break-word; }
+    .attr-v .yes { color:var(--good); } .attr-v .no { color:var(--muted-3); }
+    .more-note { font-size:12.5px; color:var(--muted-3); margin-top:12px; }
+    .mimic { color:var(--bad); font-weight:600; font-size:13px; margin-top:12px; }
 
-    .vt-section { margin-top: 30px; padding-top: 20px; border-top: 3px solid #e5e7eb; }
+    .empty-note { color:var(--muted); font-size:14px; line-height:1.7; }
+    .empty-note ul { margin:10px 0 0 18px; }
 
-    .vt-file-card { background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 18px; margin-bottom: 15px; }
-    .vt-file-card.malicious { border-left: 4px solid #dc2626; }
-    .vt-file-card.suspicious { border-left: 4px solid #f59e0b; }
-    .vt-file-card.clean { border-left: 4px solid #22c55e; }
+    /* ---- records section ---- */
+    .rec { border:1px solid var(--line-2); border-radius:12px; padding:16px 18px; margin-bottom:12px; background:var(--panel); }
+    .rec-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+    .rec-title { font-weight:600; color:var(--text); }
+    .rec-fp { font-family:var(--mono); font-size:12.5px; color:var(--accent); word-break:break-all; }
+    .badge { font-size:11px; font-weight:600; padding:3px 8px; border-radius:5px; }
+    .badge.yes { background:var(--good-bg); color:var(--good); } .badge.no { background:rgba(255,255,255,.04); color:var(--muted-2); }
 
-    .vt-file-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; flex-wrap: wrap; margin-bottom: 10px; }
-    .vt-file-name { font-weight: 600; word-break: break-all; flex: 1; min-width: 0; }
-    .vt-stats { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
-    .vt-stat { background: #f9fafb; padding: 6px 10px; border-radius: 5px; font-size: 13px; }
-    .vt-stat.malicious-stat { background: #fee2e2; color: #b91c1c; font-weight: bold; }
-    .vt-stat.suspicious-stat { background: #fef3c7; color: #92400e; }
-    .vt-meta { font-size: 12px; color: #6b7280; margin-top: 6px; }
+    .section { margin-top:30px; padding-top:22px; border-top:1px solid var(--line); }
+    .section h2 { font-family:var(--mono); font-size:13px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin:0 0 16px; font-weight:600; }
 
-    .indicator-list { margin-top: 10px; }
-    .indicator-list h5 { font-size: 13px; color: #374151; margin: 8px 0 4px; }
-    .indicator-list code { display: block; background: #f9fafb; padding: 4px 8px; border-radius: 3px; font-size: 12px; word-break: break-all; margin-bottom: 3px; border: 1px solid #f3f4f6; }
+    /* ---- VT ---- */
+    .vt-note { background:var(--panel); border:1px solid var(--line-2); border-radius:10px; padding:14px 16px; color:var(--muted); font-size:13.5px; }
+    .vt-file { background:var(--panel); border:1px solid var(--line-2); border-radius:12px; padding:16px 18px; margin-bottom:12px; }
+    .vt-file.malicious { border-left:3px solid var(--bad); }
+    .vt-file.suspicious { border-left:3px solid var(--warn); }
+    .vt-file.clean { border-left:3px solid var(--good); }
+    .vt-stats { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
+    .vt-stat { font-family:var(--mono); font-size:12px; padding:5px 9px; border-radius:6px; background:var(--panel-2); color:var(--muted); }
+    .vt-stat.bad { background:var(--bad-bg); color:#f2a3a8; } .vt-stat.warn { background:var(--warn-bg); color:var(--warn); }
+    .vt-meta { font-size:12px; color:var(--muted-3); margin-top:6px; word-break:break-all; }
+    .ind h5 { font-size:12px; color:var(--muted-2); margin:10px 0 4px; }
+    .ind code { display:block; font-size:12px; color:var(--text-2); background:var(--panel-2); border:1px solid var(--line); border-radius:5px; padding:4px 8px; margin-bottom:3px; word-break:break-all; }
+    .pivot-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin-top:14px; }
+    .pivot-col { background:var(--panel-2); border:1px solid var(--line-2); border-radius:10px; padding:12px; }
+    .pivot-col h4 { font-size:12px; color:var(--muted-2); margin:0 0 8px; text-transform:uppercase; letter-spacing:.08em; }
+    .pivot-item { font-family:var(--mono); font-size:12px; color:var(--text-2); padding:3px 0; word-break:break-all; }
+    .pivot-item .count { color:var(--muted-3); margin-left:6px; }
+    .defang-note { font-size:11.5px; color:var(--muted-3); font-style:italic; margin-top:8px; }
 
-    .pivot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; margin-top: 15px; }
-    .pivot-col { background: #f9fafb; padding: 12px; border-radius: 5px; border: 1px solid #e5e7eb; }
-    .pivot-col h4 { font-size: 14px; color: #374151; margin-bottom: 8px; }
-    .pivot-item { font-family: 'Courier New', monospace; font-size: 12px; padding: 3px 0; word-break: break-all; }
-    .pivot-item .count { color: #6b7280; font-weight: 600; margin-left: 6px; }
+    .yara-block { background:#070b10; color:var(--text-2); border:1px solid var(--line-2); padding:16px; border-radius:10px; font-family:var(--mono); font-size:13px; white-space:pre; overflow-x:auto; }
 
-    .yara-block { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 13px; white-space: pre; overflow-x: auto; }
-
-    .vt-not-configured { background: #f3f4f6; padding: 15px; border-radius: 5px; color: #6b7280; font-size: 14px; }
-    .defang-notice { font-size: 12px; color: #6b7280; margin-top: 8px; font-style: italic; }
-
-    .quick-lookup { margin-top: 40px; padding: 25px; background: #f9fafb; border-radius: 8px; border: 2px solid #e5e7eb; }
-    .quick-lookup h3 { margin-bottom: 15px; color: #374151; }
-    .quick-lookup form { display: flex; gap: 10px; flex-wrap: wrap; }
-    .quick-lookup input { flex: 1; min-width: 220px; }
-    .quick-lookup .btn { white-space: nowrap; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:30px; padding-top:22px; border-top:1px solid var(--line); }
+    .timestamp { text-align:center; color:var(--muted-3); font-family:var(--mono); font-size:11px; letter-spacing:.05em; margin-top:20px; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="result-header">
-    <h2>Lookup Result</h2>
-    <div class="fingerprint-display">{{ result.fingerprint }}</div>
+{% set found = result.match_type in ('exact','near','wildcard','cipher_variant') %}
 
-    {% if result.match_type == 'exact' %}
-        <span class="status-badge status-exact">✓ Exact match</span>
-    {% elif result.match_type == 'near' %}
-        <span class="status-badge status-near">~ Near match</span>
-    {% elif result.match_type == 'wildcard' %}
-        <span class="status-badge status-wildcard">∗ Wildcard match</span>
-    {% elif result.match_type == 'cipher_variant' %}
-        <span class="status-badge status-cipher_variant">~ Cipher variant</span>
-    {% elif result.match_type == 'partial' %}
-        <span class="status-badge status-partial">~ Partial match</span>
-    {% else %}
-        <span class="status-badge status-not-found">✗ Not found in JA4DB</span>
-    {% endif %}
-    <div style="margin-top: 8px; font-size: 14px; color: #1e3a8a;">{{ result.match_label }}</div>
-    {% if result.browser_mimicry %}
-    <p style="color:#b91c1c; font-weight:600; margin-top:8px;">⚠ a+c match a known browser — possible mimicry / impersonation.</p>
-    {% endif %}
+<!-- re-lookup: edit and search again without leaving the page -->
+<form class="relookup" method="POST" action="/lookup" autocomplete="off">
+    <span class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg></span>
+    <input type="text" name="fingerprint" value="{{ result.fingerprint }}" spellcheck="false" required
+           aria-label="Look up another fingerprint">
+    <input type="hidden" name="enrich_vt" value="on">
+    <button type="submit" class="btn">Lookup
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+    </button>
+</form>
+
+<!-- type + verdict -->
+<div class="q-row">
+    <span class="type-chip type-{{ breakdown.type if breakdown else 'unknown' }}">
+        {% if breakdown and breakdown.valid %}{{ breakdown.type_label }}{% elif result.is_wildcard %}Wildcard pattern{% else %}Unrecognised format{% endif %}
+    </span>
+    <div class="verdict {{ 'verdict-found' if found else ('verdict-partial' if result.match_type=='partial' else 'verdict-none') }}">
+        {% if found %}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        {% endif %}
+        {{ result.match_label }}
+    </div>
 </div>
 
-{% if parsed %}
-<div class="result-card">
-    <h3>📊 Fingerprint Analysis</h3>
-    <div class="summary-line">{{ parsed.summary }}</div>
-    <div style="margin-top: 12px;">
-        <div class="detail-row">
-            <div class="detail-label">Transport:</div>
-            <div class="detail-value">{{ parsed.components.transport.code }} — {{ parsed.components.transport.meaning }}</div>
-        </div>
-        <div class="detail-row">
-            <div class="detail-label">TLS Version:</div>
-            <div class="detail-value">{{ parsed.components.tls_version.code }} — {{ parsed.components.tls_version.meaning }}</div>
-        </div>
-        <div class="detail-row">
-            <div class="detail-label">SNI:</div>
-            <div class="detail-value">{{ parsed.components.sni.code }} — {{ parsed.components.sni.meaning }}</div>
-        </div>
-        <div class="detail-row">
-            <div class="detail-label">Cipher Count:</div>
-            <div class="detail-value">{{ parsed.components.cipher_count.value }} ({{ parsed.components.cipher_count.code }})</div>
-        </div>
-        <div class="detail-row">
-            <div class="detail-label">Extension Count:</div>
-            <div class="detail-value">{{ parsed.components.extension_count.value }} ({{ parsed.components.extension_count.code }})</div>
-        </div>
-        <div class="detail-row">
-            <div class="detail-label">ALPN:</div>
-            <div class="detail-value">{{ parsed.components.alpn.code }} — {{ parsed.components.alpn.meaning }}</div>
-        </div>
-        <div class="detail-row">
-            <div class="detail-label">Cipher Hash (ja4_b):</div>
-            <div class="detail-value"><code>{{ parsed.ja4_b_cipher_hash }}</code></div>
-        </div>
-        <div class="detail-row">
-            <div class="detail-label">Extension Hash (ja4_c):</div>
-            <div class="detail-value"><code>{{ parsed.ja4_c_extension_hash }}</code></div>
-        </div>
-    </div>
-    {% if parsed.risk %}
-    <div class="risk-panel risk-{{ parsed.risk.level }}">
-        <strong>Risk: {{ parsed.risk.level|upper }}</strong>
-        <span style="color:#6b7280;">(score {{ parsed.risk.score }})</span>
-        {% if parsed.risk.flags %}
-        <ul>
-            {% for f in parsed.risk.flags %}
-            <li><strong>{{ f.title }}</strong> — {{ f.detail }}</li>
-            {% endfor %}
-        </ul>
-        {% else %}
-        <p style="margin-top:6px;">No legacy TLS, SNI present, ALPN advertised.</p>
+{% if breakdown and breakdown.valid %}
+<!-- signature + segment strip -->
+<div class="sig-card">
+    <div class="sig-head">
+        <span class="sig-type">{{ breakdown.type_label }}</span>
+        {% if breakdown.risk %}
+        <span class="risk-badge sev-{{ breakdown.risk.level }}">Risk: {{ breakdown.risk.level|upper }} · score {{ breakdown.risk.score }}</span>
         {% endif %}
     </div>
-    {% endif %}
+    <div class="seg-strip">
+        {% for seg in breakdown.segments %}
+        <div class="seg-group">
+            <div class="seg-row">
+                {% for ch in seg.chars %}
+                <span class="seg {{ 'seg-hash' if seg.chars|length == 1 else '' }} sev-{{ ch.sev or 'none' }}">{{ ch.v }}</span>
+                {% endfor %}
+            </div>
+            <div class="seg-cap">{{ seg.label }}</div>
+        </div>
+        {% if not loop.last %}<span class="seg-sep">_</span>{% endif %}
+        {% endfor %}
+    </div>
+    <div class="sig-summary">{{ breakdown.summary }}</div>
+</div>
+
+<!-- split: decode + attribution -->
+<div class="split">
+    <div class="pane">
+        <div class="pane-label">Decoded components</div>
+        {% for f in breakdown.decode %}
+        <div class="dec-row sev-{{ f.sev or 'none' }}">
+            <span class="dec-code">{{ f.code }}</span>
+            <span class="dec-label">{{ f.label }}</span>
+            <span class="dec-mean">{{ f.meaning }}</span>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div>
+        {% if breakdown.risk %}
+        <div class="pane side-card risk-card sev-{{ breakdown.risk.level }}">
+            <div class="pane-label">Risk assessment</div>
+            {% if breakdown.risk.flags %}
+            <ul class="risk-flags">
+                {% for fl in breakdown.risk.flags %}
+                <li><b>{{ fl.title }}</b> — {{ fl.detail }}</li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="risk-none-note">No legacy TLS, SNI present, ALPN advertised — no risk indicators.</div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <div class="pane side-card">
+            <div class="pane-label">JA4DB attribution</div>
+            {% if found and result.entries %}
+                {% set top = result.entries[0] %}
+                <div class="attr-row"><span class="attr-k">Verdict</span><span class="attr-v">{{ result.count }} record(s)</span></div>
+                {% if top.application %}<div class="attr-row"><span class="attr-k">Application</span><span class="attr-v">{{ top.application }}</span></div>{% endif %}
+                {% if top.library %}<div class="attr-row"><span class="attr-k">Library</span><span class="attr-v">{{ top.library }}</span></div>{% endif %}
+                {% if top.os %}<div class="attr-row"><span class="attr-k">OS</span><span class="attr-v">{{ top.os }}</span></div>{% endif %}
+                {% if top.device %}<div class="attr-row"><span class="attr-k">Device</span><span class="attr-v">{{ top.device }}</span></div>{% endif %}
+                {% if top.user_agent_string %}<div class="attr-row"><span class="attr-k">User-Agent</span><span class="attr-v">{{ top.user_agent_string }}</span></div>{% endif %}
+                <div class="attr-row"><span class="attr-k">Verified</span><span class="attr-v">{% if top.verified %}<span class="yes">yes</span>{% else %}<span class="no">no</span>{% endif %}</span></div>
+                {% if result.count > 1 %}<div class="more-note">Full record list below ↓</div>{% endif %}
+                {% if result.browser_mimicry %}<div class="mimic">⚠ a+c match a known browser — possible mimicry / impersonation.</div>{% endif %}
+            {% elif result.match_type == 'partial' %}
+                <div class="empty-note">{{ result.message }}<br>{{ result.cipher_matches|length }} cipher-hash and {{ result.extension_matches|length }} extension-hash neighbors (below).</div>
+            {% else %}
+                <div class="empty-note">Not present in the offline JA4DB snapshot. Could be custom tooling, new malware, or recent software. Pivot via VirusTotal / threat intel.</div>
+            {% endif %}
+        </div>
+    </div>
 </div>
 {% elif result.is_wildcard %}
-<div class="warning-box">
-    <h3>∗ Wildcard pattern</h3>
-    <p>Component decoding is skipped because this query contains <code>*</code>. The pattern is matched verbatim against JA4DB and (if enabled) VirusTotal.</p>
+<div class="sig-card"><div class="empty-note">Wildcard pattern — component decoding is skipped. The pattern is matched verbatim against JA4DB{% if vt_configured %} and VirusTotal{% endif %}.</div></div>
+{% endif %}
+
+<!-- full JA4DB records -->
+{% if found and result.entries %}
+<div class="section">
+    <h2>JA4DB records — {{ result.count }} match(es)</h2>
+    {% for entry in result.entries[:30] %}
+    <div class="rec">
+        <div class="rec-head">
+            <span class="rec-title">{{ entry.application or entry.library or 'Unlabeled record' }}</span>
+            <span class="badge {{ 'yes' if entry.verified else 'no' }}">{{ 'Verified' if entry.verified else 'Unverified' }}</span>
+        </div>
+        {% if entry.ja4_fingerprint and result.match_type in ('near','wildcard','cipher_variant') %}
+        <div class="rec-fp">{{ entry.ja4_fingerprint }}</div>
+        {% endif %}
+        {% if entry.os %}<div class="attr-row"><span class="attr-k">OS</span><span class="attr-v">{{ entry.os }}</span></div>{% endif %}
+        {% if entry.device %}<div class="attr-row"><span class="attr-k">Device</span><span class="attr-v">{{ entry.device }}</span></div>{% endif %}
+        {% if entry.user_agent_string %}<div class="attr-row"><span class="attr-k">User-Agent</span><span class="attr-v">{{ entry.user_agent_string }}</span></div>{% endif %}
+        {% if entry.certificate_authority %}<div class="attr-row"><span class="attr-k">CA</span><span class="attr-v">{{ entry.certificate_authority }}</span></div>{% endif %}
+        {% if entry.observation_count %}<div class="attr-row"><span class="attr-k">Observations</span><span class="attr-v">{{ entry.observation_count }}</span></div>{% endif %}
+        {% if entry.notes %}<div class="attr-row"><span class="attr-k">Notes</span><span class="attr-v">{{ entry.notes }}</span></div>{% endif %}
+    </div>
+    {% endfor %}
+    {% if result.count > 30 %}<div class="more-note">… {{ result.count - 30 }} more record(s) — use Export JSON for the full set.</div>{% endif %}
+</div>
+{% elif result.match_type == 'partial' %}
+<div class="section">
+    <h2>Hash neighbors</h2>
+    {% for entry in (result.cipher_matches + result.extension_matches)[:30] %}
+    <div class="rec">
+        <div class="rec-head"><span class="rec-title">{{ entry.application or entry.library or 'Unlabeled' }}</span></div>
+        <div class="rec-fp">{{ entry.ja4_fingerprint }}</div>
+    </div>
+    {% endfor %}
 </div>
 {% endif %}
 
-{% if result.match_type == 'partial' %}
-    <div class="warning-box">
-        <h3>~ Partial Match</h3>
-        <p>{{ result.message }}</p>
-    </div>
-    {% if result.cipher_matches %}
-    <div class="result-card">
-        <h3>Cipher hash neighbors ({{ result.cipher_matches|length }})</h3>
-        {% for entry in result.cipher_matches[:25] %}
-            <div class="detail-row">
-                <div class="detail-label">{{ entry.application or entry.library or 'Unknown' }}</div>
-                <div class="detail-value"><code>{{ entry.ja4_fingerprint }}</code></div>
-            </div>
-        {% endfor %}
-    </div>
-    {% endif %}
-    {% if result.extension_matches %}
-    <div class="result-card">
-        <h3>Extension hash neighbors ({{ result.extension_matches|length }})</h3>
-        {% for entry in result.extension_matches[:25] %}
-            <div class="detail-row">
-                <div class="detail-label">{{ entry.application or entry.library or 'Unknown' }}</div>
-                <div class="detail-value"><code>{{ entry.ja4_fingerprint }}</code></div>
-            </div>
-        {% endfor %}
-    </div>
-    {% endif %}
-{% elif not result.found %}
-    <div class="warning-box">
-        <h3>🔍 Not found in JA4DB</h3>
-        <p>{{ result.message }}</p>
-        <p style="margin-top: 10px;"><strong>This could indicate:</strong></p>
-        <ul>
-            <li>Custom or proprietary application</li>
-            <li>New malware variant or recently released software</li>
-            <li>Uncommon TLS client configuration or IoT device</li>
-        </ul>
-        <p style="margin-top: 15px;"><strong>Recommendation:</strong> {{ result.recommendation }}</p>
-    </div>
-{% else %}
-    {% for entry in result.entries %}
-        {% if loop.index > 1 %}<div class="entry-separator"></div>{% endif %}
-        <div class="result-card">
-            <h3>
-                🎯 Match #{{ loop.index }}
-                {% if entry.verified %}
-                    <span class="verified-badge verified-yes">✓ Verified</span>
-                {% else %}
-                    <span class="verified-badge verified-no">Unverified</span>
-                {% endif %}
-            </h3>
-
-            {% if result.match_type in ('near', 'wildcard') and entry.ja4_fingerprint %}
-            <div class="detail-row">
-                <div class="detail-label">Stored ja4:</div>
-                <div class="detail-value"><code>{{ entry.ja4_fingerprint }}</code></div>
-            </div>
-            {% endif %}
-            <div class="detail-row">
-                <div class="detail-label">Application:</div>
-                <div class="detail-value"><strong>{{ entry.application or 'Unknown' }}</strong></div>
-            </div>
-            {% if entry.library %}
-            <div class="detail-row"><div class="detail-label">Library:</div><div class="detail-value">{{ entry.library }}</div></div>
-            {% endif %}
-            {% if entry.device %}
-            <div class="detail-row"><div class="detail-label">Device:</div><div class="detail-value">{{ entry.device }}</div></div>
-            {% endif %}
-            {% if entry.os %}
-            <div class="detail-row"><div class="detail-label">Operating System:</div><div class="detail-value">{{ entry.os }}</div></div>
-            {% endif %}
-            {% if entry.user_agent_string %}
-            <div class="detail-row"><div class="detail-label">User Agent:</div><div class="detail-value">{{ entry.user_agent_string }}</div></div>
-            {% endif %}
-            {% if entry.certificate_authority %}
-            <div class="detail-row"><div class="detail-label">CA:</div><div class="detail-value">{{ entry.certificate_authority }}</div></div>
-            {% endif %}
-            {% if entry.observation_count %}
-            <div class="detail-row"><div class="detail-label">Observations:</div><div class="detail-value">{{ entry.observation_count }}</div></div>
-            {% endif %}
-            {% if entry.notes %}
-            <div class="detail-row"><div class="detail-label">Notes:</div><div class="detail-value">{{ entry.notes }}</div></div>
-            {% endif %}
-        </div>
-    {% endfor %}
-    <div style="background: #f0fdf4; padding: 15px; border-radius: 5px; border-left: 4px solid #22c55e; margin-top: 20px;">
-        <strong>✓ Total Matches:</strong> {{ result.count }}
-    </div>
-{% endif %}
-
-<!-- VirusTotal Results Section -->
-<div class="vt-section">
-    <h2 style="color: #374151; margin-bottom: 15px;">🛡️ VirusTotal Intelligence</h2>
-
+<!-- VirusTotal -->
+<div class="section">
+    <h2>VirusTotal Intelligence</h2>
     {% if not vt_configured %}
-        <div class="vt-not-configured">
-            <strong>VirusTotal integration not configured.</strong><br>
-            Add a VT Intelligence/Enterprise key to your <code>.env</code> as <code>VIRUSTOTAL_API_KEY=…</code> to enable
-            file-pivoting on <code>behavior_network:&lt;ja4&gt;</code>.
-        </div>
+        <div class="vt-note">Not configured. Add <code>VIRUSTOTAL_API_KEY</code> to <code>.env</code> to pivot on <code>behavior_network:&lt;ja4&gt;</code>.</div>
     {% elif vt_result %}
-        <div style="font-family: 'Courier New', monospace; font-size: 13px; color: #374151; margin-bottom: 12px;">
-            Query: <code>{{ vt_result.query }}</code>
-        </div>
-
-        {% if vt_result.status == 'not_found' %}
-            <div class="vt-not-configured" style="background:#d1fae5; color:#065f46;">
-                ✓ No files in VT exhibit this JA4 in their network behavior.
-            </div>
+        {% if vt_result.status == 'unsupported_type' %}
+            <div class="vt-note">{{ vt_result.message }}</div>
+        {% elif vt_result.status == 'not_found' %}
+            <div class="vt-note" style="color:var(--good);">✓ No files in VT exhibit this JA4 in their network behaviour.</div>
         {% elif vt_result.status == 'error' %}
-            <div class="warning-box"><strong>⚠ VirusTotal Error</strong><br><small>{{ vt_result.message }}</small></div>
+            <div class="vt-note" style="color:var(--warn);">⚠ {{ vt_result.message }}</div>
         {% elif vt_result.status == 'found' %}
-            <div style="background: #fef3c7; padding: 15px; border-radius: 5px; margin-bottom: 15px;">
-                <strong>⚠ {{ vt_result.count }} file(s) communicate with this JA4</strong>
-            </div>
-
+            <div class="vt-note" style="color:var(--warn); margin-bottom:14px;">⚠ {{ vt_result.count }} file(s) communicate with this JA4.</div>
             {% for file in vt_result.results %}
-                <div class="vt-file-card {% if file.malicious and file.malicious > 0 %}malicious{% elif file.suspicious and file.suspicious > 0 %}suspicious{% else %}clean{% endif %}">
-                    <div class="vt-file-header">
-                        <div class="vt-file-name">{{ file.name }}</div>
-                        {% if file.vt_link %}
-                            <a href="{{ file.vt_link }}" target="_blank" rel="noopener noreferrer" style="color:#3b82f6;">View on VT →</a>
-                        {% endif %}
-                    </div>
-
-                    <div class="vt-stats">
-                        <div class="vt-stat malicious-stat">🔴 Malicious: {{ file.malicious or 0 }}</div>
-                        <div class="vt-stat suspicious-stat">🟡 Suspicious: {{ file.suspicious or 0 }}</div>
-                        <div class="vt-stat">⚪ Undetected: {{ file.undetected or 0 }}</div>
-                    </div>
-
-                    <div class="vt-meta">
-                        {% if file.type %}<strong>Type:</strong> {{ file.type }} &nbsp;|&nbsp; {% endif %}
-                        {% if file.size %}<strong>Size:</strong> {{ (file.size / 1024) | round(2) }} KB &nbsp;|&nbsp; {% endif %}
-                        {% if file.first_seen %}<strong>First seen:</strong> {{ file.first_seen }} &nbsp;|&nbsp; {% endif %}
-                        {% if file.last_seen %}<strong>Last seen:</strong> {{ file.last_seen }}{% endif %}
-                    </div>
-                    <div class="vt-meta"><strong>SHA256:</strong> <code>{{ file.sha256 }}</code></div>
-                    {% if file.tags %}
-                    <div class="vt-meta"><strong>Tags:</strong> {{ file.tags | join(', ') }}</div>
-                    {% endif %}
-
-                    {% if file.network %}
-                        <div class="indicator-list">
-                            {% if file.network.contacted_ips %}
-                                <h5>Contacted IPs (defanged)</h5>
-                                {% for ip in file.network.contacted_ips %}<code>{{ ip }}</code>{% endfor %}
-                            {% endif %}
-                            {% if file.network.contacted_domains %}
-                                <h5>Contacted Domains (defanged)</h5>
-                                {% for d in file.network.contacted_domains %}<code>{{ d }}</code>{% endfor %}
-                            {% endif %}
-                            {% if file.network.contacted_urls %}
-                                <h5>Contacted URLs (defanged)</h5>
-                                {% for u in file.network.contacted_urls %}<code>{{ u }}</code>{% endfor %}
-                            {% endif %}
-                        </div>
-                    {% endif %}
+            <div class="vt-file {% if file.malicious and file.malicious > 0 %}malicious{% elif file.suspicious and file.suspicious > 0 %}suspicious{% else %}clean{% endif %}">
+                <div class="rec-head">
+                    <span class="rec-title" style="word-break:break-all;">{{ file.name }}</span>
+                    {% if file.vt_link %}<a href="{{ file.vt_link }}" target="_blank" rel="noopener">View on VT →</a>{% endif %}
                 </div>
-            {% endfor %}
-
-            {% if vt_result.network_pivots %}
-            <div class="result-card">
-                <h3>🌐 Aggregated Network Pivots</h3>
-                <div class="pivot-grid">
-                    <div class="pivot-col">
-                        <h4>Top IPs</h4>
-                        {% for ip, count in vt_result.network_pivots.top_contacted_ips %}
-                            <div class="pivot-item">{{ ip }}<span class="count">×{{ count }}</span></div>
-                        {% else %}<div class="pivot-item" style="color:#9ca3af;">none</div>{% endfor %}
-                    </div>
-                    <div class="pivot-col">
-                        <h4>Top Domains</h4>
-                        {% for d, count in vt_result.network_pivots.top_contacted_domains %}
-                            <div class="pivot-item">{{ d }}<span class="count">×{{ count }}</span></div>
-                        {% else %}<div class="pivot-item" style="color:#9ca3af;">none</div>{% endfor %}
-                    </div>
-                    <div class="pivot-col">
-                        <h4>Top URLs</h4>
-                        {% for u, count in vt_result.network_pivots.top_contacted_urls %}
-                            <div class="pivot-item">{{ u }}<span class="count">×{{ count }}</span></div>
-                        {% else %}<div class="pivot-item" style="color:#9ca3af;">none</div>{% endfor %}
-                    </div>
+                <div class="vt-stats">
+                    <span class="vt-stat bad">malicious {{ file.malicious or 0 }}</span>
+                    <span class="vt-stat warn">suspicious {{ file.suspicious or 0 }}</span>
+                    <span class="vt-stat">undetected {{ file.undetected or 0 }}</span>
                 </div>
-                <div class="defang-notice">All IPs / domains / URLs above are defanged so links cannot be accidentally clicked.</div>
+                <div class="vt-meta">{% if file.type %}{{ file.type }} · {% endif %}{% if file.size %}{{ (file.size/1024)|round(1) }} KB · {% endif %}SHA256 {{ file.sha256 }}</div>
+                {% if file.network %}
+                <div class="ind">
+                    {% if file.network.contacted_ips %}<h5>Contacted IPs (defanged)</h5>{% for ip in file.network.contacted_ips %}<code>{{ ip }}</code>{% endfor %}{% endif %}
+                    {% if file.network.contacted_domains %}<h5>Contacted domains (defanged)</h5>{% for d in file.network.contacted_domains %}<code>{{ d }}</code>{% endfor %}{% endif %}
+                    {% if file.network.contacted_urls %}<h5>Contacted URLs (defanged)</h5>{% for u in file.network.contacted_urls %}<code>{{ u }}</code>{% endfor %}{% endif %}
+                </div>
+                {% endif %}
             </div>
+            {% endfor %}
+            {% if vt_result.network_pivots %}
+            <div class="pivot-grid">
+                <div class="pivot-col"><h4>Top IPs</h4>{% for ip,c in vt_result.network_pivots.top_contacted_ips %}<div class="pivot-item">{{ ip }}<span class="count">×{{ c }}</span></div>{% else %}<div class="pivot-item" style="color:var(--muted-3);">none</div>{% endfor %}</div>
+                <div class="pivot-col"><h4>Top domains</h4>{% for d,c in vt_result.network_pivots.top_contacted_domains %}<div class="pivot-item">{{ d }}<span class="count">×{{ c }}</span></div>{% else %}<div class="pivot-item" style="color:var(--muted-3);">none</div>{% endfor %}</div>
+                <div class="pivot-col"><h4>Top URLs</h4>{% for u,c in vt_result.network_pivots.top_contacted_urls %}<div class="pivot-item">{{ u }}<span class="count">×{{ c }}</span></div>{% else %}<div class="pivot-item" style="color:var(--muted-3);">none</div>{% endfor %}</div>
+            </div>
+            <div class="defang-note">All indicators are defanged so links cannot be accidentally clicked.</div>
             {% endif %}
         {% endif %}
     {% endif %}
 </div>
 
+<!-- YARA -->
 {% if yara_rule %}
-<div class="result-card">
-    <h3>🧬 YARA Hunting Rule</h3>
-    <p style="font-size: 14px; color: #6b7280; margin-bottom: 10px;">
-        Drop into VirusTotal Hunter to track this fingerprint in real time.
-        Wildcard patterns produce a regex condition.
-    </p>
-    <pre class="yara-block">{{ yara_rule }}</pre>
-    <button class="btn" type="button" onclick="copyYara(this)" style="margin-top: 10px;">Copy rule</button>
+<div class="section">
+    <h2>YARA hunting rule</h2>
+    <pre class="yara-block" id="yara">{{ yara_rule }}</pre>
+    <button class="btn btn-ghost" type="button" onclick="copyText('yara', this)" style="margin-top:12px;">Copy rule</button>
 </div>
 {% endif %}
 
-<div class="quick-lookup">
-    <h3>🔍 Lookup another fingerprint</h3>
-    <form method="POST" action="/lookup">
-        <input type="text" name="fingerprint"
-               placeholder="JA4 or wildcard (e.g. t13d190900_*_97f8aa674fd9)"
-               required autocomplete="off">
-        <button type="submit" class="btn">Lookup</button>
-    </form>
-</div>
-
-<div class="timestamp">Lookup performed at {{ timestamp }}</div>
-
 <div class="actions">
-    <a href="/" class="btn btn-secondary">← Home</a>
-    <button class="btn export-btn" onclick="exportJson()">⬇ Export JSON</button>
+    <a href="/" class="btn btn-ghost">← New lookup</a>
+    <button class="btn" onclick="exportJson()">⬇ Export JSON</button>
 </div>
+<div class="timestamp">Lookup performed at {{ timestamp }}</div>
 
 <script>
 const exportPayload = {{ export_payload | tojson }};
 function exportJson() {
-    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {type: 'application/json'});
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {type:'application/json'});
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    link.href = url;
-    link.download = `ja4lookr_${ts}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+    const a = document.createElement('a');
+    a.href = url; a.download = `ja4lookr_${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
+    a.click(); URL.revokeObjectURL(url);
 }
-function copyYara(btn) {
-    const block = btn.previousElementSibling;
-    navigator.clipboard.writeText(block.textContent).then(() => {
-        const old = btn.textContent;
-        btn.textContent = '✓ Copied';
-        setTimeout(() => btn.textContent = old, 1500);
+function copyText(id, btn) {
+    navigator.clipboard.writeText(document.getElementById(id).textContent.trim()).then(() => {
+        const old = btn.textContent; if (btn.textContent.trim()) { btn.textContent = '✓ Copied'; setTimeout(()=>btn.textContent=old,1400); }
     });
 }
 </script>
