@@ -70,13 +70,8 @@
             flex-wrap: wrap;
         }
         .topbar-left { display: flex; align-items: center; gap: 26px; }
-        .brand { display: flex; align-items: center; gap: 10px; }
-        .brand .logo { display: inline-flex; color: var(--accent); }
-        .brand .wordmark {
-            font-family: var(--mono); font-weight: 600; font-size: 18px;
-            color: #eef2f6; letter-spacing: -.01em;
-        }
-        .brand .wordmark b { color: var(--accent); font-weight: 600; }
+        .brand { display: inline-flex; align-items: center; text-decoration: none; }
+        .brand-logo { height: 52px; width: auto; display: block; }
         .topnav { display: flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 12.5px; letter-spacing: .04em; }
         .topnav a {
             padding: 7px 13px; border-radius: 7px; color: var(--muted); transition: background .15s, color .15s;
@@ -204,12 +199,9 @@
 
         <div class="topbar">
             <div class="topbar-left">
-                <div class="brand">
-                    <span class="logo" aria-hidden="true">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-                    </span>
-                    <span class="wordmark"><b>ja4</b>lookr</span>
-                </div>
+                <a class="brand" href="/" aria-label="JA4LookR home">
+                    <img class="brand-logo" src="/assets/ja4lookR.png" alt="JA4LookR">
+                </a>
                 <nav class="topnav">
                     <a href="/" class="{{ 'active' if nav_active == 'lookup' else '' }}">Lookup</a>
                     <a href="/about" class="{{ 'active' if nav_active == 'about' else '' }}">About</a>
@@ -224,10 +216,11 @@
 
         <div class="db-notice">
             <span class="tag">Notice</span>
-            <span>Live JA4DB lookups now require a <strong>FoxIO account</strong> (register a work
-                email at <a href="https://ja4db.foxio.io" target="_blank" rel="noopener">ja4db.foxio.io</a>);
-                full database exports are limited to <strong>enterprise plans</strong>.
-                JA4LookR runs offline against a bundled/legacy snapshot — no account needed.</span>
+            <span>The JA4DB is <strong>not bundled</strong> — supply your own copy at
+                <code>.ja4_cache/ja4db_full.json.gz</code> via a
+                <a href="https://ja4db.foxio.io" target="_blank" rel="noopener">FoxIO account</a>
+                (full exports are <strong>enterprise-only</strong>) or alternative means.
+                Once present, JA4LookR runs entirely offline.</span>
         </div>
 
         <div class="content">
@@ -246,7 +239,7 @@
 
         <footer>
             <span>JA4LOOKR · JA4+ FINGERPRINT ANALYSIS</span>
-            <span>JA4+ standard by <a href="https://github.com/FoxIO-LLC/ja4" target="_blank" rel="noopener">FoxIO</a></span>
+            <span><a href="https://github.com/MikeVriesema/ja4LookR" target="_blank" rel="noopener">github.com/MikeVriesema/ja4LookR</a></span>
         </footer>
     </div>
 </body>

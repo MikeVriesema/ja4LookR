@@ -1,4 +1,8 @@
-# JA4LookR
+<p align="center">
+  <img src="assets/ja4lookR.png" alt="JA4LookR" width="320">
+</p>
+
+<h1 align="center">JA4LookR</h1>
 
 > [!NOTE]
 > **Creation of this tool was AI-assisted (built with Claude).** The tool itself is
@@ -11,23 +15,24 @@
 
 A **JA4+ suite** fingerprint **threat-hunting** tool with CLI and Web interfaces.
 Decodes the whole suite — **JA4** (TLS client), **JA4S** (TLS server), **JA4H**
-(HTTP), **JA4X** (X.509 cert), **JA4T** (TCP) — and serves a locally bundled
-[JA4DB](https://ja4db.com) snapshot (offline-first), resolving matches in-process
-including **near**, **cipher-variant**, and **partial** matches when an exact
+(HTTP), **JA4X** (X.509 cert), **JA4T** (TCP) — and looks fingerprints up
+in-process against a **local JA4DB snapshot that you provide** (offline-first),
+resolving **near**, **cipher-variant**, and **partial** matches when an exact
 lookup misses. Every parsed JA4 is scored by a **risk engine** for the indicators
 threat hunters look for (legacy TLS, IP-only handshakes, missing ALPN). Optionally
 pivots to VirusTotal Intelligence (JA4/JA4S) for enrichment.
 
 > [!IMPORTANT]
-> **JA4DB access changed.** The public database moved behind
-> [ja4db.foxio.io](https://ja4db.foxio.io): live lookups now require a **free
-> FoxIO account** (register with a work email), and **full database exports are
-> limited to enterprise plans**. JA4LookR is **offline-first**: it runs entirely
-> against a **bundled/legacy JA4DB snapshot** (~77k merged records shipped at
-> `.ja4_cache/ja4db_full.json.gz`), so lookups, hunting, and risk scoring need no
-> FoxIO account. If you have enterprise export access, point `JA4DB_URL` (and
-> `JA4DB_API_KEY` if required) at the live endpoint and run `--refresh` to pull
-> updates — any fetch failure silently falls back to the bundled copy.
+> **You must supply your own JA4DB copy — it is not distributed with this tool.**
+> The database is FoxIO's and has moved behind
+> [ja4db.foxio.io](https://ja4db.foxio.io): live lookups require a **free FoxIO
+> account** (register with a work email), and **full database exports are limited
+> to enterprise plans**. Obtain a JA4DB copy through FoxIO directly (account /
+> enterprise export) **or by alternative means**, then place it — gzipped JSON —
+> at `.ja4_cache/ja4db_full.json.gz`. JA4LookR is **offline-first**: once that file
+> is present, lookups, hunting, and risk scoring run entirely offline with no
+> further FoxIO access. If you have live/enterprise access you can instead set
+> `JA4DB_URL` (and `JA4DB_API_KEY` if required) and run `--refresh` to fetch it.
 
 ## Features
 
@@ -48,12 +53,10 @@ pivots to VirusTotal Intelligence (JA4/JA4S) for enrichment.
   JA4 (protocol/TLS/SNI/ciphers/extensions/ALPN), JA4S (server), JA4H (HTTP
   method/version/cookie/headers/lang), JA4X (cert), JA4T (TCP). Type is
   auto-detected; the DB indexes all members for exact/wildcard lookup.
-- **Local DB cache (offline-first)** — merged JA4DB snapshot (~77k deduped
-  records, gzipped) bundled at `.ja4_cache/ja4db_full.json.gz` and served from
-  RAM. Lookups never block on the network; updates are pulled only on explicit
-  `--refresh`, and any fetch failure falls back to the bundled copy. Rebuild the
-  cache from raw snapshots under `db/ja4db/` with
-  `python tools/build_ja4db_cache.py` (tolerates truncated downloads, dedupes).
+- **Local DB cache (offline-first)** — you supply a JA4DB snapshot (gzipped JSON)
+  at `.ja4_cache/ja4db_full.json.gz`; it is loaded into RAM and served from there.
+  Lookups never block on the network; updates are pulled only on explicit
+  `--refresh`, which falls back to the local copy on any failure.
 - **Wildcard search** — `*` matches any section, e.g.
   `t13d190900_*_97f8aa674fd9` (GoLang/Sliver), `*_8daaf6152771_*`, `t13*`.
 - **VirusTotal pivoting** — `--vt` runs `behavior_network:<fp>` and enriches the
@@ -93,120 +96,6 @@ Decoding `ja4_a` (`t13d1516h2`):
 | `h2`     | `h2`  | ALPN first/last char (`h2`=HTTP/2, `h1`=HTTP/1.1, `h3`=HTTP/3, `00`=none) |
 
 Reference: [FoxIO-LLC/ja4](https://github.com/FoxIO-LLC/ja4)
-
-## Risk engine
-
-Every parsed fingerprint is scored for the indicators threat hunters look for.
-Flags stack into an overall level (`none → low → medium → high`):
-
-| Flag | Trigger | Severity | Why it matters |
-|------|---------|----------|----------------|
-| `legacy_tls` | TLS version `11`/`10`/`s3`/`s2`/`s1` | high | Pre-TLS-1.2 is rare for current legitimate clients; common in old malware, scanners, and embedded/IoT stacks. |
-| `no_sni_ip` | SNI flag is `i` | medium | Connected to an IP with no server name. Browsers almost always send SNI; IP-only TLS is typical of C2 and custom tooling. |
-| `no_alpn` | ALPN is `00` | medium | No application protocol negotiated. Alongside a browser-like handshake, suggests a minimal/custom TLS stack. |
-| `quic` | Transport is `q` | info | TLS 1.3 in QUIC. Informational. |
-
-**Combo escalation:** `no_sni_ip` **and** `no_alpn` together is the classic C2
-shape and escalates the overall level to **high**.
-
-Worked examples (from the FoxIO threat-hunting slides):
-
-| Tool | JA4 | Risk | Why |
-|------|-----|------|-----|
-| Chrome 137 | `t13d1516h2_8daaf6152771_d8a2da3f94cd` | **none** | TLS 1.3, SNI present, ALPN `h2` |
-| Cobalt Strike | `t12d210600_b973bfd88a0e_1da50ec048a3` | **medium** | TLS 1.2 + SNI, but no ALPN |
-| Sliver | `t13i190800_9dc949149365_97f8aa674fd9` | **high** | IP-only **and** no ALPN |
-| Metasploit | `t12i190700_d83cc789557e_16bbda4055b2` | **high** | IP-only **and** no ALPN |
-
-In the web UI, the same explanation lives in the **About** panel on the home
-page, and the risk panel is rendered with colour-coded severity on every result.
-
-## Threat-hunting field guide
-
-Inspired by the [hunt.io JA4 glossary](https://hunt.io/glossary/ja4-fingerprinting)
-and the FoxIO/VirusTotal hunting workflow. Each technique has a CLI command and a
-web equivalent.
-
-- **Surface the risky shapes.** Sweep the DB for legacy TLS, IP-only, and
-  no-ALPN clients:
-  `python3 ja4lookr.py --hunt risky` · web: **Hunt DB** tab → tick *Risky*.
-- **Partial-segment pivoting.** When an actor randomizes cipher suites, `ja4_a`
-  and `ja4_c` stay stable while `ja4_b` changes. A lookup that misses exact/near
-  but shares `ja4_a`+`ja4_c` with a known entry returns the **`cipher_variant`**
-  tier — and if those neighbours are browsers, a **browser-mimicry** warning.
-  Pivot wider with a wildcard on the cipher hash: `python3 ja4lookr.py "t13d1516h2_*_d8a2da3f94cd"`.
-- **ALPN-00 non-browser heuristic.** `--hunt no-alpn` finds clients advertising
-  no application protocol — with a browser-like handshake this points at a
-  minimal/custom stack (malware or tooling).
-- **Direct-to-IP C2.** `--hunt no-sni,no-alpn` isolates the IP-only + no-ALPN
-  shape used by Sliver and Metasploit.
-- **Reverse-pivot from intel.** Got a tool name from a report? Find its known
-  fingerprints: `python3 ja4lookr.py --search "cobalt strike"`.
-- **Pivot to infrastructure.** Feed a fingerprint (or a `t13d190900_*_97f8aa674fd9`
-  wildcard) to VirusTotal: `python3 ja4lookr.py --vt "t13i190800_*_97f8aa674fd9"`
-  to surface communicating files and their contacted IPs/domains/URLs.
-
-## Comparison to sans-blue-team/ja4db-search
-
-[`ja4db-search`](https://github.com/sans-blue-team/ja4db-search) is a handy
-minimal lookup. JA4LookR is a superset:
-
-| Capability | ja4db-search | JA4LookR |
-|------------|:---:|:---:|
-| Exact `ja4_fingerprint` lookup | ✓ | ✓ |
-| Near / partial / **cipher_variant** matching | — | ✓ |
-| Wildcard hunting patterns | — | ✓ |
-| Risk scoring (legacy TLS / IP-only / no-ALPN) | — | ✓ |
-| Structural DB hunting (`--hunt`) | — | ✓ |
-| Reverse metadata search (by app/UA/library) | — | ✓ |
-| Bundled offline DB cache (~73k records) | manual file | ✓ |
-| VirusTotal pivot + enrichment | — | ✓ |
-| YARA scaffolding | — | ✓ |
-| Web UI + REST API | — | ✓ |
-
-## Installation
-
-```bash
-git clone https://github.com/yourusername/ja4LookR.git
-cd ja4LookR
-pip3 install -r requirements.txt
-```
-
-### Optional: VirusTotal Integration
-
-`--vt` performs the JA4 hunt described in the
-[FoxIO + VirusTotal blog post](https://blog.virustotal.com/2024/10/unveiling-hidden-connections-ja4-client.html):
-
-1. **`behavior_network:<ja4>`** — find all files in VT that exhibit this JA4
-   in their dynamic-analysis network behavior.
-2. For the top N file results, automatically pull
-   `/files/<sha>/contacted_ips`, `contacted_domains`, and `contacted_urls`,
-   then aggregate them so the top C2/CDN/host pivots surface immediately.
-3. Wildcards in the JA4 (`t13d190900_*_97f8aa674fd9`) are passed straight
-   through to the VT search.
-
-Requires a VT **Intelligence** or **Enterprise** API key — the free public
-API rejects `behavior_network:` (returns 403/empty). Provide the key via:
-
-```bash
-# .env file in the project root, or shell environment
-VIRUSTOTAL_API_KEY=your_vt_intelligence_key_here
-# VT_API_KEY is also accepted as an alias
-```
-
-The key is read from the environment (or a `.env` file in the project root) by
-both the CLI and the web app. Verify it before hunting:
-
-```bash
-python3 ja4lookr.py --vt-check
-# VirusTotal key: valid — Key valid; VT Intelligence (behavior_network) available
-# VirusTotal key: valid_no_intelligence — Key valid but lacks VT Intelligence; ...
-# VirusTotal key: no_key — No VT API key set (VIRUSTOTAL_API_KEY or VT_API_KEY)
-```
-
-VT enrichment costs ~3 API calls per enriched file (default 5 files = ~16
-calls per lookup). Tune with `--vt-max-enrich` / `--vt-max-files`, or skip
-enrichment entirely with `--no-vt-enrich`.
 
 ## Usage
 
@@ -250,11 +139,11 @@ The CLI shares the same engine as the web app — every match type, VirusTotal
 pivot, network enrichment, YARA scaffold, and JSON output is available in
 both. Pick whichever feels better for the moment; nothing is locked away.
 
-The full JA4DB (~73k records) ships gzip-cached at
-`.ja4_cache/ja4db_full.json.gz` and loads from disk in under a second — no
-network needed. If that file is ever missing, the first run tries to download
-it; run `--refresh` to pull updates (which safely falls back to the bundled
-copy when the endpoint is unavailable).
+Provide your own JA4DB copy (gzipped JSON) at `.ja4_cache/ja4db_full.json.gz`
+(see the important note at the top). It loads from disk in under a second — no
+network needed. If that file is missing, the first run attempts a download from
+`JA4DB_URL`; `--refresh` pulls updates and safely falls back to your local copy
+when the endpoint is unavailable.
 
 #### Single Lookup
 
@@ -426,6 +315,134 @@ Optional query parameters:
 }
 ```
 
+## Risk engine
+
+Every parsed fingerprint is scored for the indicators threat hunters look for.
+Flags stack into an overall level (`none → low → medium → high`):
+
+| Flag | Trigger | Severity | Why it matters |
+|------|---------|----------|----------------|
+| `legacy_tls` | TLS version `11`/`10`/`s3`/`s2`/`s1` | high | Pre-TLS-1.2 is rare for current legitimate clients; common in old malware, scanners, and embedded/IoT stacks. |
+| `no_sni_ip` | SNI flag is `i` | medium | Connected to an IP with no server name. Browsers almost always send SNI; IP-only TLS is typical of C2 and custom tooling. |
+| `no_alpn` | ALPN is `00` | medium | No application protocol negotiated. Alongside a browser-like handshake, suggests a minimal/custom TLS stack. |
+| `quic` | Transport is `q` | info | TLS 1.3 in QUIC. Informational. |
+
+**Combo escalation:** `no_sni_ip` **and** `no_alpn` together is the classic C2
+shape and escalates the overall level to **high**.
+
+Worked examples (from the FoxIO threat-hunting slides):
+
+| Tool | JA4 | Risk | Why |
+|------|-----|------|-----|
+| Chrome 137 | `t13d1516h2_8daaf6152771_d8a2da3f94cd` | **none** | TLS 1.3, SNI present, ALPN `h2` |
+| Cobalt Strike | `t12d210600_b973bfd88a0e_1da50ec048a3` | **medium** | TLS 1.2 + SNI, but no ALPN |
+| Sliver | `t13i190800_9dc949149365_97f8aa674fd9` | **high** | IP-only **and** no ALPN |
+| Metasploit | `t12i190700_d83cc789557e_16bbda4055b2` | **high** | IP-only **and** no ALPN |
+
+In the web UI, the same explanation lives in the **About** panel on the home
+page, and the risk panel is rendered with colour-coded severity on every result.
+
+## Threat-hunting field guide
+
+Inspired by the [hunt.io JA4 glossary](https://hunt.io/glossary/ja4-fingerprinting)
+and the FoxIO/VirusTotal hunting workflow. Each technique has a CLI command and a
+web equivalent.
+
+- **Surface the risky shapes.** Sweep the DB for legacy TLS, IP-only, and
+  no-ALPN clients:
+  `python3 ja4lookr.py --hunt risky` · web: **Hunt DB** tab → tick *Risky*.
+- **Partial-segment pivoting.** When an actor randomizes cipher suites, `ja4_a`
+  and `ja4_c` stay stable while `ja4_b` changes. A lookup that misses exact/near
+  but shares `ja4_a`+`ja4_c` with a known entry returns the **`cipher_variant`**
+  tier — and if those neighbours are browsers, a **browser-mimicry** warning.
+  Pivot wider with a wildcard on the cipher hash: `python3 ja4lookr.py "t13d1516h2_*_d8a2da3f94cd"`.
+- **ALPN-00 non-browser heuristic.** `--hunt no-alpn` finds clients advertising
+  no application protocol — with a browser-like handshake this points at a
+  minimal/custom stack (malware or tooling).
+- **Direct-to-IP C2.** `--hunt no-sni,no-alpn` isolates the IP-only + no-ALPN
+  shape used by Sliver and Metasploit.
+- **Reverse-pivot from intel.** Got a tool name from a report? Find its known
+  fingerprints: `python3 ja4lookr.py --search "cobalt strike"`.
+- **Pivot to infrastructure.** Feed a fingerprint (or a `t13d190900_*_97f8aa674fd9`
+  wildcard) to VirusTotal: `python3 ja4lookr.py --vt "t13i190800_*_97f8aa674fd9"`
+  to surface communicating files and their contacted IPs/domains/URLs.
+
+## Comparison to sans-blue-team/ja4db-search
+
+[`ja4db-search`](https://github.com/sans-blue-team/ja4db-search) is a handy
+minimal lookup. JA4LookR is a superset:
+
+| Capability | ja4db-search | JA4LookR |
+|------------|:---:|:---:|
+| Exact `ja4_fingerprint` lookup | ✓ | ✓ |
+| Near / partial / **cipher_variant** matching | — | ✓ |
+| Wildcard hunting patterns | — | ✓ |
+| Risk scoring (legacy TLS / IP-only / no-ALPN) | — | ✓ |
+| Structural DB hunting (`--hunt`) | — | ✓ |
+| Reverse metadata search (by app/UA/library) | — | ✓ |
+| Local offline DB cache (user-supplied) | manual file | ✓ |
+| VirusTotal pivot + enrichment | — | ✓ |
+| YARA scaffolding | — | ✓ |
+| Web UI + REST API | — | ✓ |
+
+## Installation
+
+```bash
+git clone https://github.com/MikeVriesema/ja4LookR.git
+cd ja4LookR
+pip3 install -r requirements.txt
+```
+
+**Provide a JA4DB snapshot.** The database is **not** included with this tool —
+obtain your own copy from FoxIO ([ja4db.foxio.io](https://ja4db.foxio.io), free
+account / enterprise export) or by alternative means, and place it as gzipped
+JSON at `.ja4_cache/ja4db_full.json.gz`:
+
+```bash
+mkdir -p .ja4_cache
+gzip -c your_ja4db_export.json > .ja4_cache/ja4db_full.json.gz
+```
+
+Without this file, lookups that need the database will attempt a network fetch
+from `JA4DB_URL` (and fail gracefully if it is unreachable). Structural decoding
+of any JA4+ fingerprint works with or without the database.
+
+### Optional: VirusTotal Integration
+
+`--vt` performs the JA4 hunt described in the
+[FoxIO + VirusTotal blog post](https://blog.virustotal.com/2024/10/unveiling-hidden-connections-ja4-client.html):
+
+1. **`behavior_network:<ja4>`** — find all files in VT that exhibit this JA4
+   in their dynamic-analysis network behavior.
+2. For the top N file results, automatically pull
+   `/files/<sha>/contacted_ips`, `contacted_domains`, and `contacted_urls`,
+   then aggregate them so the top C2/CDN/host pivots surface immediately.
+3. Wildcards in the JA4 (`t13d190900_*_97f8aa674fd9`) are passed straight
+   through to the VT search.
+
+Requires a VT **Intelligence** or **Enterprise** API key — the free public
+API rejects `behavior_network:` (returns 403/empty). Provide the key via:
+
+```bash
+# .env file in the project root, or shell environment
+VIRUSTOTAL_API_KEY=your_vt_intelligence_key_here
+# VT_API_KEY is also accepted as an alias
+```
+
+The key is read from the environment (or a `.env` file in the project root) by
+both the CLI and the web app. Verify it before hunting:
+
+```bash
+python3 ja4lookr.py --vt-check
+# VirusTotal key: valid — Key valid; VT Intelligence (behavior_network) available
+# VirusTotal key: valid_no_intelligence — Key valid but lacks VT Intelligence; ...
+# VirusTotal key: no_key — No VT API key set (VIRUSTOTAL_API_KEY or VT_API_KEY)
+```
+
+VT enrichment costs ~3 API calls per enriched file (default 5 files = ~16
+calls per lookup). Tune with `--vt-max-enrich` / `--vt-max-files`, or skip
+enrichment entirely with `--no-vt-enrich`.
+
 ## Security Features
 
 - **Rate Limiting**:
@@ -458,10 +475,9 @@ Optional query parameters:
 ### Environment Variables
 
 ```bash
-# JA4DB cache (no key required)
-# Bundled offline at .ja4_cache/ja4db_full.json.gz; served as-is. Pull updates
-# with `--refresh`. Optionally point at a live endpoint (falls back to the
-# bundle on any error):
+# JA4DB cache — YOU supply this file: .ja4_cache/ja4db_full.json.gz (gzipped JSON).
+# Served as-is and offline. To fetch/refresh from a live endpoint you can access,
+# point at it (falls back to your local copy on any error):
 # JA4DB_URL=https://ja4db.foxio.io/api/read/
 # JA4DB_API_KEY=your_enterprise_token   # if the endpoint requires auth
 
@@ -755,6 +771,6 @@ Open an issue on GitHub for problems, questions, or suggestions.
 
 ---
 
-**Note**: JA4LookR runs **offline** against a bundled JA4DB snapshot by default.
+**Note**: JA4LookR runs **offline** against a local JA4DB snapshot that you supply.
 Live JA4DB access requires a FoxIO account; please respect FoxIO's terms and any
 rate limits when using `--refresh` against the live endpoint.
