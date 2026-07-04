@@ -393,19 +393,31 @@ cd ja4LookR
 pip3 install -r requirements.txt
 ```
 
-**Provide a JA4DB snapshot.** The database is **not** included with this tool —
-obtain your own copy from FoxIO ([ja4db.foxio.io](https://ja4db.foxio.io), free
-account / enterprise export) or by alternative means, and place it as gzipped
-JSON at `.ja4_cache/ja4db_full.json.gz`:
+**Provide a JA4DB snapshot.** The plaintext database is **not** distributed with
+this tool. The repository ships an **encrypted** copy at
+`.ja4_cache/ja4db_full.7z` (7-Zip, AES-256, password-protected). The password is
+**not** in the repo — obtain it from the maintainer, or bring your own JA4DB copy
+from FoxIO ([ja4db.foxio.io](https://ja4db.foxio.io), free account / enterprise
+export) or by alternative means.
+
+Decrypt the bundled archive to the path the app loads:
 
 ```bash
-mkdir -p .ja4_cache
+# From the encrypted copy in the repo (you'll be prompted for the password):
+7z x -so .ja4_cache/ja4db_full.7z | gzip -c > .ja4_cache/ja4db_full.json.gz
+
+# ...or from your own export:
 gzip -c your_ja4db_export.json > .ja4_cache/ja4db_full.json.gz
 ```
 
-Without this file, lookups that need the database will attempt a network fetch
-from `JA4DB_URL` (and fail gracefully if it is unreachable). Structural decoding
-of any JA4+ fingerprint works with or without the database.
+The app reads only the plaintext `.ja4_cache/ja4db_full.json.gz` (which stays
+gitignored); the encrypted `.7z` is the at-rest copy. Without a decrypted DB,
+lookups that need it attempt a network fetch from `JA4DB_URL` (failing gracefully
+if unreachable) — structural decoding of any JA4+ fingerprint works either way.
+
+> **Note on redistribution:** the JA4DB is FoxIO's data. It is shipped here only
+> as AES-256 ciphertext (unusable without the password); do not commit the
+> password or a decrypted copy, and respect FoxIO's terms.
 
 ### Optional: VirusTotal Integration
 
